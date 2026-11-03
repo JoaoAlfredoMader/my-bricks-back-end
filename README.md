@@ -45,6 +45,7 @@ npm install
 npm run db:up          # PostgreSQL on localhost:5433
 npm run db:generate    # Prisma client -> src/generated/prisma
 npm run db:migrate     # apply migrations
+npm run db:seed        # reference data (idempotent)
 npm run dev            # http://localhost:3000/health
 ```
 
@@ -57,6 +58,7 @@ The model is normalized (3NF) and documented in [`docs/database/mybricks-databas
 - **Money** is stored as integer cents (`BigInt`). Convert in the DTO layer: `JSON.stringify` cannot serialize `BigInt`.
 - **Derived values are never stored** (property status, IRR, cap rate, NOI, yield, financing installment and balance).
 - **Rules Prisma cannot express** (one active contract per property, no overlapping confirmed reservations, `CHECK` constraints, case-insensitive unique e-mail) live in the hand-written migration `prisma/migrations/*_manual_constraints`. Prisma does not treat them as drift.
+- **Reference data** (cities, subtypes, allowed usages, transaction categories) is seeded and idempotent. Display names are pt-BR; codes (enum values) stay in English.
 - **Deleting an organization** must delete in order inside one transaction (properties, stored files, clients, occupants, agencies, organization). Postgres checks each cascade step separately, so a plain `DELETE` of the organization fails by design.
 
 ## Scripts
@@ -68,6 +70,8 @@ The model is normalized (3NF) and documented in [`docs/database/mybricks-databas
 | `npm run typecheck` | TypeScript check |
 | `npm run db:up` / `db:down` | start / stop local PostgreSQL |
 | `npm run db:migrate` | create/apply migrations (dev) |
+| `npm run db:seed` | seed reference data: 5,571 IBGE municipalities, property subtypes, allowed usages per property type, transaction categories |
+| `npm run db:seed:fetch-cities` | regenerate `prisma/seed/data/cities.json` from the IBGE API |
 | `npm run db:deploy` | apply migrations (production) |
 | `npm run db:studio` | Prisma Studio |
 
