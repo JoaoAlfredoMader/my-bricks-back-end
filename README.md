@@ -88,7 +88,23 @@ Read-only reference data for the forms (shared by every organization).
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/cities` | `search` (min. 2 characters, accent-insensitive), optional `state` (UF), `limit` (max 50) |
+| `GET` | `/transaction-categories` | revenue and expense categories |
 | `GET` | `/property-catalog` | for each property type: its subtypes and the usages allowed for it |
+
+### Transactions — `/api/transactions`
+
+One-off or monthly-recurring revenues and expenses of a property that are not rent (sale, renovation, financing installment, fees...). Rent comes from the contracts and reservations.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | `propertyId`, `categoryId`, `type` (`revenue` \| `expense`), `isRecurring`, `from` / `to` (inclusive, on `occurredOn`), `page`, `pageSize`; latest first |
+| `POST` | `/` | `propertyId`, `categoryId`, `amountCents` (> 0), `occurredOn`, `description`, `isRecurring`, `recurrenceEndsOn` |
+| `GET` | `/:id` | |
+| `PATCH` | `/:id` | any subset except the property |
+| `DELETE` | `/:id` | |
+
+- The **category decides revenue vs expense** (`GET /api/lookups/transaction-categories`); the amount is always positive and `type` is derived from the category in every response.
+- A recurring transaction repeats every month from `occurredOn` until `recurrenceEndsOn` (`null` = still running). An end date only makes sense on a recurring transaction and cannot be before the first occurrence. Turning recurrence off on a `PATCH` drops the end date.
 
 ### Properties — `/api/properties`
 
