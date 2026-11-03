@@ -11,7 +11,7 @@ export interface OccupantRecord {
 
 /**
  * Occupants (tenants and guests) belong to the organization, not to a member. A member only sees
- * the ones that appear in contracts of properties they created.
+ * the ones that appear in contracts or reservations of properties they created.
  */
 export interface OccupantScope {
   organizationId: string;
@@ -57,20 +57,26 @@ const select = { id: true, name: true, document: true, email: true, phone: true 
 export function createOccupantsRepository(prisma: PrismaClient): OccupantsRepository {
   return {
     async list(scope, { search, skip, take }) {
+      const visibleToMember: Prisma.OccupantWhereInput | null = scope.visibleToUserId
+        ? {
+            OR: [
+              { contracts: { some: { property: { createdById: scope.visibleToUserId } } } },
+              { reservations: { some: { property: { createdById: scope.visibleToUserId } } } },
+            ],
+          }
+        : null;
+      const matchesSearch: Prisma.OccupantWhereInput | null = search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { document: { contains: search.toUpperCase() } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : null;
       const where: Prisma.OccupantWhereInput = {
         organizationId: scope.organizationId,
-        ...(scope.visibleToUserId
-          ? { contracts: { some: { property: { createdById: scope.visibleToUserId } } } }
-          : {}),
-        ...(search
-          ? {
-              OR: [
-                { name: { contains: search, mode: "insensitive" } },
-                { document: { contains: search.toUpperCase() } },
-                { email: { contains: search, mode: "insensitive" } },
-              ],
-            }
-          : {}),
+        AND: [visibleToMember, matchesSearch].filter((clause) => clause !== null),
       };
       const [items, total] = await Promise.all([
         prisma.occupant.findMany({ where, select, orderBy: [{ name: "asc" }, { id: "asc" }], skip, take }),
