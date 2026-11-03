@@ -10,6 +10,7 @@ import type { ProvisioningService } from "./modules/auth/provisioning.service.js
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
 import { createContractsRoutes } from "./modules/contracts/contracts.route.js";
 import { createHealthRoutes } from "./modules/health/health.route.js";
+import { createKpisRoutes } from "./modules/kpis/kpis.route.js";
 import { createLookupsRoutes } from "./modules/lookups/lookups.route.js";
 import { createOccupantsRoutes } from "./modules/occupants/occupants.route.js";
 import { createPropertiesRoutes } from "./modules/properties/properties.route.js";
@@ -41,6 +42,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/me", createSessionRoutes());
   app.route("/api/clients", createClientsRoutes(prisma));
   app.route("/api/contracts", createContractsRoutes(prisma));
+  app.route("/api/kpis", createKpisRoutes(prisma));
   app.route("/api/lookups", createLookupsRoutes(prisma));
   app.route("/api/properties", createPropertiesRoutes(prisma));
   app.route("/api/occupants", createOccupantsRoutes(prisma));
