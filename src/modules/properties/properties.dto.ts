@@ -1,4 +1,4 @@
-import type { ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
+import type { AcquisitionType, ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
 import { centsToNumber } from "../../shared/money.js";
 import type { PropertyRecord } from "./properties.repository.js";
 import { derivePropertyStatus, type PropertyStatus } from "./property-status.js";
@@ -43,6 +43,7 @@ export interface PropertyDto {
   clientId: string | null;
   address: PropertyAddressDto | null;
   manualRental: { tenantName: string | null; monthlyRentCents: number; dueDay: number | null } | null;
+  acquisition: { acquisitionType: AcquisitionType; acquiredOn: string | null; costCents: number | null } | null;
   createdById: string;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +104,11 @@ export function toPropertyDto(record: PropertyRecord): PropertyDto {
       tenantName: manualRental.tenantName,
       monthlyRentCents: centsToNumber(manualRental.monthlyRentCents),
       dueDay: manualRental.dueDay,
+    },
+    acquisition: record.acquisition && {
+      acquisitionType: record.acquisition.acquisitionType,
+      acquiredOn: record.acquisition.acquiredOn ? record.acquisition.acquiredOn.toISOString().slice(0, 10) : null,
+      costCents: record.acquisition.costCents === null ? null : centsToNumber(record.acquisition.costCents),
     },
     createdById: record.createdById,
     createdAt: record.createdAt.toISOString(),

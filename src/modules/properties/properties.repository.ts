@@ -1,5 +1,6 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type {
+  AcquisitionType,
   ConservationState,
   PropertyType,
   RentalMode,
@@ -46,6 +47,7 @@ const select = {
     },
   },
   manualRental: { select: { tenantName: true, monthlyRentCents: true, dueDay: true } },
+  acquisition: { select: { acquisitionType: true, acquiredOn: true, costCents: true } },
   /** Only used to derive the status. */
   contracts: { where: { status: "active" }, select: { id: true }, take: 1 },
 } satisfies Prisma.PropertySelect;
@@ -96,10 +98,17 @@ export interface ManualRentalData {
   dueDay: number | null;
 }
 
+export interface AcquisitionData {
+  acquisitionType: AcquisitionType;
+  acquiredOn: Date | null;
+  costCents: bigint | null;
+}
+
 /** `undefined` leaves the child untouched, `null` removes it, a value creates or replaces it. */
 export interface PropertyChildren {
   address?: AddressData | null;
   manualRental?: ManualRentalData | null;
+  acquisition?: AcquisitionData | null;
 }
 
 export interface PropertyListQuery {
@@ -174,6 +183,7 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
           ...(clientId ? { clientId } : {}),
           ...(children.address ? { address: { create: children.address } } : {}),
           ...(children.manualRental ? { manualRental: { create: children.manualRental } } : {}),
+          ...(children.acquisition ? { acquisition: { create: children.acquisition } } : {}),
         },
         select,
       });
@@ -199,6 +209,15 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
             where: { propertyId: id },
             create: { propertyId: id, ...children.manualRental },
             update: children.manualRental,
+          });
+        }
+
+        if (children.acquisition === null) await tx.propertyAcquisition.deleteMany({ where: { propertyId: id } });
+        else if (children.acquisition) {
+          await tx.propertyAcquisition.upsert({
+            where: { propertyId: id },
+            create: { propertyId: id, ...children.acquisition },
+            update: children.acquisition,
           });
         }
 

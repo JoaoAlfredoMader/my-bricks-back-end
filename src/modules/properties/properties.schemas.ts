@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
+import { AcquisitionType, ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
 import { optionalText } from "../../shared/validation/optional-text.js";
 
 const cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -21,6 +21,24 @@ const addressSchema = z.object({
   complement: optionalText(z.string().trim().max(100)),
   neighborhood: optionalText(z.string().trim().max(100)),
 });
+
+/** Calendar date as `YYYY-MM-DD`. */
+const date = z.iso.date();
+
+/** How the property was acquired. It is the start of the IRR period and the base of its cost. */
+const acquisitionSchema = z
+  .object({
+    acquisitionType: z.enum(AcquisitionType),
+    /** Purchase date, or base date for an inheritance. */
+    acquiredOn: date.nullish(),
+    /** Purchase price, or base cost for an inheritance. Without it the IRR is not available. */
+    costCents: cents.nullish(),
+  })
+  .superRefine((input, context) => {
+    if (input.acquisitionType === "inheritance" && !input.acquiredOn) {
+      context.addIssue({ code: "custom", path: ["acquiredOn"], message: "An inheritance needs a base date" });
+    }
+  });
 
 const manualRentalSchema = z.object({
   tenantName: optionalText(z.string().trim().max(255)),
@@ -60,11 +78,17 @@ export const createPropertySchema = z.object({
   rentalMode: fields.rentalMode.default("manual"),
   address: addressSchema.nullish(),
   manualRental: manualRentalSchema.nullish(),
+  acquisition: acquisitionSchema.nullish(),
 });
 
-/** `null` on a nullable field clears it; on `address` / `manualRental` it removes the child. */
+/** `null` on a nullable field clears it; on `address` / `manualRental` / `acquisition` it removes the child. */
 export const updatePropertySchema = z
-  .object({ ...fields, address: addressSchema.nullable(), manualRental: manualRentalSchema.nullable() })
+  .object({
+    ...fields,
+    address: addressSchema.nullable(),
+    manualRental: manualRentalSchema.nullable(),
+    acquisition: acquisitionSchema.nullable(),
+  })
   .partial()
   .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
     message: "Send at least one field to update",

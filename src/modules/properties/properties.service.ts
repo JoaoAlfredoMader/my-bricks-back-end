@@ -4,6 +4,7 @@ import type { TenantScope } from "../../shared/http/tenant.js";
 import { numberToCents } from "../../shared/money.js";
 import { type Page, type PropertyDto, toPropertyDto } from "./properties.dto.js";
 import type {
+  AcquisitionData,
   AddressData,
   ManualRentalData,
   PropertiesRepository,
@@ -43,6 +44,14 @@ function toAddressData(input: NonNullable<CreatePropertyInput["address"]>): Addr
     number: input.number ?? null,
     complement: input.complement ?? null,
     neighborhood: input.neighborhood ?? null,
+  };
+}
+
+function toAcquisitionData(input: NonNullable<CreatePropertyInput["acquisition"]>): AcquisitionData {
+  return {
+    acquisitionType: input.acquisitionType,
+    acquiredOn: input.acquiredOn ? new Date(`${input.acquiredOn}T00:00:00.000Z`) : null,
+    costCents: input.costCents == null ? null : numberToCents(input.costCents),
   };
 }
 
@@ -156,6 +165,7 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
       const children: PropertyChildren = {
         address: input.address ? toAddressData(input.address) : null,
         manualRental: input.manualRental ? toManualRentalData(input.manualRental) : null,
+        acquisition: input.acquisition ? toAcquisitionData(input.acquisition) : null,
       };
       const created = await repository.create(
         { organizationId: tenant.organizationId, createdById: tenant.userId },
@@ -170,7 +180,7 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
       const current = await repository.findById(scope, id);
       if (!current) throw AppError.notFound("Property not found");
 
-      const { address, manualRental, estimatedValueCents, annualExpensesCents, ...scalars } = input;
+      const { address, manualRental, acquisition, estimatedValueCents, annualExpensesCents, ...scalars } = input;
       const patch: Partial<PropertyData> = {};
       // Zod already validated each value; `undefined` means "not sent", `null` means "clear".
       for (const [key, value] of Object.entries(scalars)) {
@@ -203,6 +213,7 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
       const children: PropertyChildren = {
         ...(address !== undefined ? { address: address ? toAddressData(address) : null } : {}),
         ...(manualRental !== undefined ? { manualRental: manualRental ? toManualRentalData(manualRental) : null } : {}),
+        ...(acquisition !== undefined ? { acquisition: acquisition ? toAcquisitionData(acquisition) : null } : {}),
       };
       const updated = await repository.update(scope, id, patch, children);
       if (!updated) throw AppError.notFound("Property not found");
