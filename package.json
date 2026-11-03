@@ -12,6 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "admin:create": "tsx --env-file=.env src/scripts/create-platform-admin.ts",
+    "maintenance": "tsx --env-file=.env src/scripts/maintenance.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:up": "docker compose up -d",
