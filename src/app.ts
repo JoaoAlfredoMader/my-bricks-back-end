@@ -8,6 +8,7 @@ import type { StorageProvider } from "./lib/storage/storage.js";
 import type { Auth } from "./modules/auth/auth.js";
 import { createAgenciesRoutes } from "./modules/agencies/agencies.route.js";
 import type { AuditRecorder } from "./modules/audit/audit.recorder.js";
+import { createOpenApiRoutes } from "./openapi/openapi.route.js";
 import { createAdminAuditRoutes, createAuditRoutes } from "./modules/audit/audit.route.js";
 import { createAuthRoutes } from "./modules/auth/auth.route.js";
 import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
@@ -33,7 +34,7 @@ import { blockDeletesWhileImpersonating, loadAuthContext } from "./shared/http/a
 
 export interface AppDependencies {
   prisma: PrismaClient;
-  env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV" | "MAX_UPLOAD_MB">>;
+  env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV" | "MAX_UPLOAD_MB" | "BETTER_AUTH_URL">>;
   auth: Auth;
   provisioning: ProvisioningService;
   audit: AuditRecorder;
@@ -50,6 +51,7 @@ export function createApp({ prisma, env, auth, provisioning, audit, storage }: A
   app.use("/api/*", cors({ origin: env.FRONTEND_URL, credentials: true }));
 
   app.route("/health", createHealthRoutes(prisma));
+  app.route("/api", createOpenApiRoutes({ serverUrl: env.BETTER_AUTH_URL ?? "http://localhost:3000" }));
 
   // Better Auth answers on its own; everything else under /api gets the session context.
   app.route("/api/auth", createAuthRoutes(auth));

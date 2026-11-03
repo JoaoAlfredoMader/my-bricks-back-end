@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { admin, anonymous, organization } from "better-auth/plugins";
+import { admin, anonymous, openAPI, organization } from "better-auth/plugins";
 import type { Env } from "../../config/env.js";
 import type { PrismaClient } from "../../lib/prisma.js";
 import { type AuditEvent, type AuditRecorder, clientIp } from "../audit/audit.recorder.js";
@@ -71,6 +71,8 @@ export function createAuth({ prisma, env, provisioning, audit }: AuthDependencie
         },
       }),
       admin(),
+      // Better Auth documents its own endpoints: /api/auth/reference and /api/auth/open-api/generate-schema.
+      openAPI(),
       anonymous({
         onLinkAccount: async ({ anonymousUser, newUser }) => {
           await provisioning.adoptDemoWorkspace(anonymousUser.user.id, {
