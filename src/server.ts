@@ -1,32 +1,24 @@
 import { serve } from "@hono/node-server";
-import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
-import { createPrismaClient } from "./lib/prisma.js";
-import { createStorage } from "./lib/storage/create-storage.js";
-import { createAuditRecorder } from "./modules/audit/audit.recorder.js";
-import { createAuditRepository } from "./modules/audit/audit.repository.js";
-import { createAuth } from "./modules/auth/auth.js";
-import { createProvisioningRepository } from "./modules/auth/provisioning.repository.js";
-import { createProvisioningService } from "./modules/auth/provisioning.service.js";
+import { createContainer } from "./container.js";
+import { startMaintenanceJob } from "./modules/maintenance/maintenance.js";
 
 const env = loadEnv();
-const prisma = createPrismaClient(env.DATABASE_URL);
-
-// Composition root: dependencies are wired by hand.
-const provisioning = createProvisioningService(createProvisioningRepository(prisma), {
-  demoTtlHours: env.DEMO_TTL_HOURS,
-});
-const audit = createAuditRecorder(createAuditRepository(prisma));
-const auth = createAuth({ prisma, env, provisioning, audit });
-const storage = createStorage(env);
-const app = createApp({ prisma, env, auth, provisioning, audit, storage });
+const { app, prisma, storage } = createContainer(env);
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`MyBricks API listening on http://localhost:${info.port}`);
 });
 
+// Expired demos, orphan files, audit retention and stale sessions.
+const stopMaintenance =
+  env.MAINTENANCE_INTERVAL_MINUTES > 0
+    ? startMaintenanceJob({ prisma, storage, intervalMinutes: env.MAINTENANCE_INTERVAL_MINUTES })
+    : () => {};
+
 async function shutdown(signal: string) {
   console.log(`${signal} received, shutting down`);
+  stopMaintenance();
   server.close();
   await prisma.$disconnect();
   process.exit(0);

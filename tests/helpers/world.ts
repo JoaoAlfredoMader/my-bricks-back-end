@@ -1,25 +1,14 @@
-import { createApp } from "../../src/app.js";
 import { loadEnv } from "../../src/config/env.js";
-import { createPrismaClient } from "../../src/lib/prisma.js";
-import { createStorage } from "../../src/lib/storage/create-storage.js";
-import { createAuditRecorder } from "../../src/modules/audit/audit.recorder.js";
-import { createAuditRepository } from "../../src/modules/audit/audit.repository.js";
-import { createAuth } from "../../src/modules/auth/auth.js";
-import { createProvisioningRepository } from "../../src/modules/auth/provisioning.repository.js";
-import { createProvisioningService } from "../../src/modules/auth/provisioning.service.js";
+import { createContainer } from "../../src/container.js";
 
-/** The real app wired against the test database, called in-process (no network). */
+/**
+ * The real app wired against the test database, called in-process (no network). Guests start with
+ * an empty workspace here, so the tests that count rows are not affected by the sample portfolio;
+ * `createContainer(env)` without the option is what the demo tests use.
+ */
 export const env = loadEnv();
-export const prisma = createPrismaClient(env.DATABASE_URL);
-
-const provisioning = createProvisioningService(createProvisioningRepository(prisma), {
-  demoTtlHours: env.DEMO_TTL_HOURS,
-});
-const audit = createAuditRecorder(createAuditRepository(prisma));
-const auth = createAuth({ prisma, env, provisioning, audit });
-/** Files go to a temporary folder (see vitest.config.ts); the global setup removes it. */
-export const storage = createStorage(env);
-export const app = createApp({ prisma, env, auth, provisioning, audit, storage });
+const container = createContainer(env, { withoutDemoData: true });
+export const { prisma, app, storage, auth } = container;
 
 /** Wipes users, organizations and everything that hangs from them. Reference data is kept. */
 export async function resetDatabase(): Promise<void> {
@@ -53,6 +42,9 @@ export interface DownloadResponse {
 export class Session {
   private cookie = "";
 
+  /** `target` is the app to call; it defaults to the test world's (use another to test a differently wired app). */
+  constructor(private readonly target: { request: typeof app.request } = app) {}
+
   async call(
     method: string,
     path: string,
@@ -60,7 +52,7 @@ export class Session {
     rawBody?: string,
     headers: Record<string, string> = {},
   ): Promise<ApiResponse> {
-    const res = await app.request(path, {
+    const res = await this.target.request(path, {
       method,
       headers: {
         "content-type": "application/json",
@@ -88,7 +80,7 @@ export class Session {
     for (const [name, value] of Object.entries(fields)) form.append(name, value);
     if (file) form.append(file.field ?? "file", new File([new Uint8Array(file.bytes)], file.name, { type: file.type }));
 
-    const res = await app.request(path, {
+    const res = await this.target.request(path, {
       method: "POST",
       // No content-type: the runtime adds the multipart boundary.
       headers: { origin: env.FRONTEND_URL, ...(this.cookie ? { cookie: this.cookie } : {}) },
@@ -107,7 +99,7 @@ export class Session {
 
   /** Fetches a binary response (an image or a document). */
   async download(path: string): Promise<DownloadResponse> {
-    const res = await app.request(path, {
+    const res = await this.target.request(path, {
       method: "GET",
       headers: { origin: env.FRONTEND_URL, ...(this.cookie ? { cookie: this.cookie } : {}) },
     });
