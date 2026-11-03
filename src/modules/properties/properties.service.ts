@@ -94,9 +94,12 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
 
   async function checkReferences(
     scope: PropertyScope,
-    refs: { clientId?: string | null; cityId?: number },
+    refs: { clientId?: string | null; agencyId?: string | null; cityId?: number },
   ): Promise<FieldError[]> {
     const errors: FieldError[] = [];
+    if (refs.agencyId && !(await repository.agencyExists(scope.organizationId, refs.agencyId))) {
+      errors.push({ path: "agencyId", message: "Agency not found" });
+    }
     if (refs.clientId && !(await repository.clientVisible(scope, refs.clientId))) {
       errors.push({ path: "clientId", message: "Client not found" });
     }
@@ -152,12 +155,14 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
         rentalMode: input.rentalMode,
         notes: input.notes ?? null,
         clientId: input.clientId ?? null,
+        agencyId: input.agencyId ?? null,
       };
 
       assertNoErrors([
         ...(await checkConsistency(data, Boolean(input.manualRental))),
         ...(await checkReferences(scope, {
           clientId: data.clientId,
+          agencyId: data.agencyId,
           ...(input.address ? { cityId: input.address.cityId } : {}),
         })),
       ]);
@@ -206,6 +211,7 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
         )),
         ...(await checkReferences(scope, {
           ...(patch.clientId ? { clientId: patch.clientId } : {}),
+          ...(patch.agencyId ? { agencyId: patch.agencyId } : {}),
           ...(address ? { cityId: address.cityId } : {}),
         })),
       ]);

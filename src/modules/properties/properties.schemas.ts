@@ -68,6 +68,8 @@ const fields = {
   rentalMode: z.enum(RentalMode),
   notes: optionalText(z.string().trim().max(10_000)),
   clientId: z.uuid().nullish(),
+  /** The agency that manages the property, if any. */
+  agencyId: z.uuid().nullish(),
 };
 
 export const createPropertySchema = z.object({

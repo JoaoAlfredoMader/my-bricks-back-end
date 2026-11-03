@@ -12,6 +12,8 @@ const select = {
   id: true,
   createdById: true,
   clientId: true,
+  agencyId: true,
+  agency: { select: { name: true } },
   name: true,
   propertyType: true,
   subtypeId: true,
@@ -81,6 +83,7 @@ export interface PropertyData {
   rentalMode: RentalMode;
   notes: string | null;
   clientId: string | null;
+  agencyId: string | null;
 }
 
 export interface AddressData {
@@ -139,6 +142,7 @@ export interface PropertiesRepository {
   isUsageAllowed(propertyType: PropertyType, usageType: UsageType): Promise<boolean>;
   subtypeBelongsTo(subtypeId: number, propertyType: PropertyType): Promise<boolean>;
   cityExists(cityId: number): Promise<boolean>;
+  agencyExists(organizationId: string, agencyId: string): Promise<boolean>;
   /** Whether the client exists in the organization and is visible within the scope. */
   clientVisible(scope: PropertyScope, clientId: string): Promise<boolean>;
 }
@@ -173,7 +177,7 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
     },
 
     create(scope, data, children) {
-      const { clientId, ...scalars } = data;
+      const { clientId, agencyId, ...scalars } = data;
       return prisma.property.create({
         data: {
           ...scalars,
@@ -181,6 +185,7 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
           createdById: scope.createdById,
           // The composite FK (client_id, organization_id) is filled by Prisma from the scalar pair.
           ...(clientId ? { clientId } : {}),
+          ...(agencyId ? { agencyId } : {}),
           ...(children.address ? { address: { create: children.address } } : {}),
           ...(children.manualRental ? { manualRental: { create: children.manualRental } } : {}),
           ...(children.acquisition ? { acquisition: { create: children.acquisition } } : {}),
@@ -240,6 +245,10 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
 
     async cityExists(cityId) {
       return (await prisma.city.count({ where: { ibgeCode: cityId } })) > 0;
+    },
+
+    async agencyExists(organizationId, agencyId) {
+      return (await prisma.agency.count({ where: { id: agencyId, organizationId } })) > 0;
     },
 
     async clientVisible(scope, clientId) {

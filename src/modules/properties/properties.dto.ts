@@ -41,6 +41,8 @@ export interface PropertyDto {
   rentalMode: RentalMode;
   notes: string | null;
   clientId: string | null;
+  agencyId: string | null;
+  agencyName: string | null;
   address: PropertyAddressDto | null;
   manualRental: { tenantName: string | null; monthlyRentCents: number; dueDay: number | null } | null;
   acquisition: { acquisitionType: AcquisitionType; acquiredOn: string | null; costCents: number | null } | null;
@@ -88,6 +90,8 @@ export function toPropertyDto(record: PropertyRecord): PropertyDto {
     rentalMode: record.rentalMode,
     notes: record.notes,
     clientId: record.clientId,
+    agencyId: record.agencyId,
+    agencyName: record.agency?.name ?? null,
     address: address && {
       cityId: address.cityId,
       city: address.city.name,
