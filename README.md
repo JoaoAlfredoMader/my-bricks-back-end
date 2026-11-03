@@ -122,6 +122,23 @@ Read-only reference data for the forms (shared by every organization).
 - An occupant with a document already stored in the organization is reused, not duplicated. Members only see occupants that appear in contracts of properties they created (`GET /api/occupants`).
 - Calendar dates are `YYYY-MM-DD`; money is integer cents.
 
+### Reservations — `/api/reservations`
+
+Short-stay bookings (Airbnb-style) of properties with `short_stay` usage.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | `propertyId`, `contractId`, `status`, `from` / `to` (stays overlapping the window `[from, to)`, for a calendar), `page`, `pageSize`; latest check-in first |
+| `POST` | `/` | `propertyId`, `checkIn`, `checkOut`, `totalAmountCents` (default 0), `notes`, optional `contractId`; the guest as `occupantId` **or** a new `occupant` |
+| `GET` | `/:id` | |
+| `PATCH` | `/:id` | confirmed reservations only: dates, total, notes, `contractId` (`null` unlinks) |
+| `POST` | `/:id/cancel` | confirmed reservations only |
+
+- **No overlap.** Two confirmed reservations of the same property cannot share a night; answers `409` naming the clashing reservation. The check-out day is free, so same-day turnover is allowed. A cancelled reservation frees its dates. The database enforces it too (`EXCLUDE` constraint), so concurrent requests for the same dates cannot both win.
+- **Contract link (optional).** It must be an active `short_stay` contract of the same property and the stay must fall inside its period. It is only re-checked when the dates or the link change.
+- Reservations are **never deleted**, only cancelled. `nights` is derived from the dates.
+- Guests are occupants, like contract tenants: a known document reuses the stored occupant, and members see the guests of reservations on properties they created.
+
 ## Database
 
 The model is normalized (3NF) and documented in [`docs/database/mybricks-database.dbml`](docs/database/mybricks-database.dbml), which can be pasted into [dbdiagram.io](https://dbdiagram.io).
