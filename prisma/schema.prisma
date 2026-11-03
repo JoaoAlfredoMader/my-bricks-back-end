@@ -368,9 +368,10 @@ model Client {
   createdById    String     @map("created_by_id") @db.Uuid
   name           String     @db.VarChar(255)
   personType     PersonType @default(individual) @map("person_type")
-  /// CPF or CNPJ (digits only)
+  /// CPF or CNPJ without punctuation (CNPJ may contain letters since 2026)
   document       String?    @db.VarChar(20)
   email          String?    @db.VarChar(320)
+  /// Digits only, area code included
   whatsapp       String?    @db.VarChar(30)
   createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
