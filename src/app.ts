@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import type { Env } from "./config/env.js";
 import type { PrismaClient } from "./lib/prisma.js";
@@ -37,6 +38,10 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   );
 
   app.onError((error, c) => {
+    // Raised by Hono itself, e.g. a malformed JSON body.
+    if (error instanceof HTTPException && error.status < 500) {
+      return c.json({ error: { code: "VALIDATION_ERROR", message: error.message } }, error.status);
+    }
     if (error instanceof AppError) {
       return c.json(
         { error: { code: error.code, message: error.message, details: error.details } },

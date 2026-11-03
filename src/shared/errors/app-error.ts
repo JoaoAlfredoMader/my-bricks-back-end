@@ -23,6 +23,10 @@ export class AppError extends Error {
     this.name = "AppError";
   }
 
+  static validation(details: unknown, message = "Invalid request"): AppError {
+    return new AppError("VALIDATION_ERROR", message, 400, details);
+  }
+
   static unauthenticated(message = "Authentication required"): AppError {
     return new AppError("UNAUTHENTICATED", message, 401);
   }
