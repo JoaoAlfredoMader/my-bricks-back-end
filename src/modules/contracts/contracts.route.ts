@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { PrismaClient } from "../../lib/prisma.js";
 import type { AppEnv } from "../../shared/http/app-env.js";
 import { requireAuth } from "../../shared/http/auth.middleware.js";
+import { audited } from "../../shared/http/audit.middleware.js";
 import { tenantScope } from "../../shared/http/tenant.js";
 import { validate } from "../../shared/http/validate.js";
 import { createContractsController } from "./contracts.controller.js";
@@ -28,7 +29,7 @@ export function createContractsRoutes(prisma: PrismaClient) {
       const { body } = await controller.list(tenantScope(c), c.req.valid("query"));
       return c.json(body);
     })
-    .post("/", validate("json", createContractSchema), async (c) => {
+    .post("/", audited("create", "contract"), validate("json", createContractSchema), async (c) => {
       const { status, body } = await controller.create(tenantScope(c), c.req.valid("json"));
       return c.json(body, status);
     })
@@ -36,15 +37,15 @@ export function createContractsRoutes(prisma: PrismaClient) {
       const { body } = await controller.get(tenantScope(c), c.req.valid("param").id);
       return c.json(body);
     })
-    .patch("/:id", validate("param", contractIdParamSchema), validate("json", updateContractSchema), async (c) => {
+    .patch("/:id", audited("update", "contract"), validate("param", contractIdParamSchema), validate("json", updateContractSchema), async (c) => {
       const { body } = await controller.update(tenantScope(c), c.req.valid("param").id, c.req.valid("json"));
       return c.json(body);
     })
-    .post("/:id/end", validate("param", contractIdParamSchema), validate("json", endContractSchema), async (c) => {
+    .post("/:id/end", audited("end_contract", "contract"), validate("param", contractIdParamSchema), validate("json", endContractSchema), async (c) => {
       const { body } = await controller.end(tenantScope(c), c.req.valid("param").id, c.req.valid("json"));
       return c.json(body);
     })
-    .post("/:id/cancel", validate("param", contractIdParamSchema), async (c) => {
+    .post("/:id/cancel", audited("cancel", "contract"), validate("param", contractIdParamSchema), async (c) => {
       const { body } = await controller.cancel(tenantScope(c), c.req.valid("param").id);
       return c.json(body);
     });
