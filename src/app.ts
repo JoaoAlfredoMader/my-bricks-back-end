@@ -12,6 +12,8 @@ import { createAdminAuditRoutes, createAuditRoutes } from "./modules/audit/audit
 import { createAuthRoutes } from "./modules/auth/auth.route.js";
 import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
+import { createContractDocumentsRoutes } from "./modules/contract-documents/contract-documents.route.js";
+import { createContractTemplatesRoutes } from "./modules/contract-templates/contract-templates.route.js";
 import { createContractsRoutes } from "./modules/contracts/contracts.route.js";
 import { createDocumentsRoutes } from "./modules/documents/documents.route.js";
 import { createAdminFeedbackRoutes, createFeedbackRoutes } from "./modules/feedback/feedback.route.js";
@@ -63,6 +65,8 @@ export function createApp({ prisma, env, auth, provisioning, audit, storage }: A
   app.route("/api/audit-logs", createAuditRoutes(prisma));
   app.route("/api/agencies", createAgenciesRoutes(prisma));
   app.route("/api/clients", createClientsRoutes(prisma));
+  app.route("/api/contract-template", createContractTemplatesRoutes(prisma));
+  app.route("/api/contracts/:id/pdf", createContractDocumentsRoutes(prisma, storage));
   app.route("/api/contracts", createContractsRoutes(prisma));
   app.route("/api/feedback", createFeedbackRoutes(prisma));
   app.route("/api/kpis", createKpisRoutes(prisma));
