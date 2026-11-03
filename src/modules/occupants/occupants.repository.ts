@@ -18,6 +18,32 @@ export interface OccupantScope {
   visibleToUserId?: string;
 }
 
+export interface OccupantData {
+  name: string;
+  document: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+/** What other modules need to know about stored occupants before attaching one to a record. */
+export interface OccupantLookup {
+  occupantExists(organizationId: string, occupantId: string): Promise<boolean>;
+  findOccupantIdByDocument(organizationId: string, document: string): Promise<string | null>;
+}
+
+export function createOccupantLookup(prisma: PrismaClient): OccupantLookup {
+  return {
+    async occupantExists(organizationId, occupantId) {
+      return (await prisma.occupant.count({ where: { id: occupantId, organizationId } })) > 0;
+    },
+
+    async findOccupantIdByDocument(organizationId, document) {
+      const occupant = await prisma.occupant.findFirst({ where: { organizationId, document }, select: { id: true } });
+      return occupant?.id ?? null;
+    },
+  };
+}
+
 export interface OccupantsRepository {
   list(
     scope: OccupantScope,
