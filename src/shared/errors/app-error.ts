@@ -23,6 +23,10 @@ export class AppError extends Error {
     this.name = "AppError";
   }
 
+  static unauthenticated(message = "Authentication required"): AppError {
+    return new AppError("UNAUTHENTICATED", message, 401);
+  }
+
   static notFound(message = "Resource not found"): AppError {
     return new AppError("NOT_FOUND", message, 404);
   }
