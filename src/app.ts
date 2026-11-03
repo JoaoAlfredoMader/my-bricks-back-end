@@ -21,7 +21,7 @@ import { createSessionRoutes } from "./modules/session/session.route.js";
 import { createTransactionsRoutes } from "./modules/transactions/transactions.route.js";
 import { AppError } from "./shared/errors/app-error.js";
 import type { AppEnv } from "./shared/http/app-env.js";
-import { loadAuthContext } from "./shared/http/auth.middleware.js";
+import { blockDeletesWhileImpersonating, loadAuthContext } from "./shared/http/auth.middleware.js";
 
 export interface AppDependencies {
   prisma: PrismaClient;
@@ -42,6 +42,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   // Better Auth answers on its own; everything else under /api gets the session context.
   app.route("/api/auth", createAuthRoutes(auth));
   app.use("/api/*", loadAuthContext(auth, provisioning));
+  app.use("/api/*", blockDeletesWhileImpersonating);
   app.route("/api/me", createSessionRoutes());
   app.route("/api/agencies", createAgenciesRoutes(prisma));
   app.route("/api/clients", createClientsRoutes(prisma));

@@ -9,6 +9,8 @@ export interface AuthContext {
     platformRole: string;
   };
   sessionId: string;
+  /** Set while a platform admin is acting as this user ("see as"); the user above is the impersonated one. */
+  impersonatedById: string | null;
   organizationId: string | null;
   /** Role of the user inside the active organization (owner | admin | member, may be comma-separated). */
   memberRole: string | null;

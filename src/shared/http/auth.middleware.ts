@@ -30,6 +30,7 @@ export function loadAuthContext(auth: Auth, provisioning: ProvisioningService): 
         platformRole: (user as { role?: string | null }).role ?? "user",
       },
       sessionId: session.id,
+      impersonatedById: (session as { impersonatedBy?: string | null }).impersonatedBy ?? null,
       organizationId,
       memberRole,
     };
@@ -41,5 +42,29 @@ export function loadAuthContext(auth: Auth, provisioning: ProvisioningService): 
 /** Rejects requests without a valid session. */
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!c.get("auth")) throw AppError.unauthenticated();
+  return next();
+};
+
+/** The `admin` plugin role lives on `users.role`; several roles are comma-separated. */
+export function isPlatformAdmin(auth: AuthContext): boolean {
+  return auth.user.platformRole.split(",").some((role) => role.trim() === "admin");
+}
+
+/**
+ * Platform operator only (the owner panel). While impersonating, the session belongs to the
+ * impersonated user, so an impersonation never grants these routes.
+ */
+export const requirePlatformAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const auth = c.get("auth");
+  if (!auth) throw AppError.unauthenticated();
+  if (!isPlatformAdmin(auth) || auth.impersonatedById) throw AppError.forbidden("Platform administrators only");
+  return next();
+};
+
+/** A platform admin "seeing as" a user can look around and edit, but not delete anything. */
+export const blockDeletesWhileImpersonating: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.req.method === "DELETE" && c.get("auth")?.impersonatedById) {
+    throw AppError.forbidden("Deleting is not allowed while impersonating a user");
+  }
   return next();
 };
