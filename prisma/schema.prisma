@@ -1,0 +1,893 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// MyBricks — Prisma schema (PostgreSQL)
+// Source of truth for the design: docs/database/mybricks-database-v3.dbml
+// ═══════════════════════════════════════════════════════════════════════════
+// - Models are PascalCase singular; tables/columns are snake_case via @@map/@map.
+// - Money is BigInt cents. Percentages are Decimal(5,2). Dates without time use @db.Date.
+// - Ids are database-generated uuids (gen_random_uuid()). Better Auth must run with
+//   advanced.database.generateId = false (or "uuid") so the database generates them.
+// - Tenant isolation: every FK between tenant tables is composite (x_id, organization_id).
+// - Rules Prisma cannot express (partial unique index, EXCLUDE, CHECKs, lower(email)
+//   index) live in the hand-written migration prisma/migrations/*_manual_constraints.
+//   Prisma does not see them as drift (verified with `prisma migrate diff`).
+// - Better Auth tables (User, Session, Account, Verification, Organization, Member,
+//   Invitation) follow the organization + admin + anonymous plugins. Re-run
+//   `npx auth@latest generate` and diff before upgrading Better Auth.
+// - Prisma 7: the connection URL lives in prisma.config.ts, not in this file.
+// ═══════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── ENUMS ─────────────────────────────────────
+
+enum InvitationStatus {
+  pending
+  accepted
+  rejected
+  canceled
+
+  @@map("invitation_status")
+}
+
+enum PersonType {
+  individual
+  company
+
+  @@map("person_type")
+}
+
+enum PropertyType {
+  residential
+  commercial
+  land
+  logistics
+  rural
+  parking
+
+  @@map("property_type")
+}
+
+enum UsageType {
+  rental
+  short_stay
+  agricultural_lease
+  concession
+  own_use
+  loan_for_use
+
+  @@map("usage_type")
+}
+
+enum ConservationState {
+  degraded
+  poor
+  regular
+  good
+  excellent
+
+  @@map("conservation_state")
+}
+
+enum RentalMode {
+  manual
+  contract
+
+  @@map("rental_mode")
+}
+
+enum AcquisitionType {
+  purchase
+  construction
+  inheritance
+  other
+
+  @@map("acquisition_type")
+}
+
+enum AmortizationSystem {
+  sac
+  price
+
+  @@map("amortization_system")
+}
+
+enum RegistrationStatus {
+  regular
+  irregular
+
+  @@map("registration_status")
+}
+
+enum ProposalType {
+  purchase
+  sale
+  rental
+  linked
+  informal
+
+  @@map("proposal_type")
+}
+
+enum ContractType {
+  conventional
+  short_stay
+
+  @@map("contract_type")
+}
+
+enum ContractStatus {
+  active
+  ended
+  cancelled
+
+  @@map("contract_status")
+}
+
+enum AdjustmentIndex {
+  igpm
+  ipca
+  inpc
+  igpdi
+  other
+
+  @@map("adjustment_index")
+}
+
+enum ReservationStatus {
+  confirmed
+  cancelled
+
+  @@map("reservation_status")
+}
+
+enum TransactionType {
+  revenue
+  expense
+
+  @@map("transaction_type")
+}
+
+enum FeedbackStatus {
+  open
+  resolved
+
+  @@map("feedback_status")
+}
+
+enum AuditAction {
+  login
+  logout
+  create
+  update
+  delete
+  view
+  upload
+  end_contract
+  cancel
+  generate_pdf
+  generate_report
+  invite_member
+  remove_member
+  impersonate_start
+  impersonate_end
+  unauthorized_access
+
+  @@map("audit_action")
+}
+
+enum AuditEntityType {
+  property
+  client
+  transaction
+  document
+  photo
+  contract
+  reservation
+  occupant
+  member
+  organization
+  report
+  feedback
+
+  @@map("audit_entity_type")
+}
+
+// ───────────────────────────── AUTH (Better Auth) ────────────────────────
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String    @db.VarChar(255)
+  email         String    @unique @db.VarChar(320)
+  emailVerified Boolean   @default(false) @map("email_verified")
+  image         String?
+  isAnonymous   Boolean   @default(false) @map("is_anonymous")
+  /// Admin plugin. The plugin may store several roles comma-separated: keep as string.
+  role          String    @default("user") @db.VarChar(100)
+  banned        Boolean   @default(false)
+  banReason     String?   @map("ban_reason")
+  banExpires    DateTime? @map("ban_expires_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions                 Session[]          @relation("SessionUser")
+  impersonatedSessions     Session[]          @relation("SessionImpersonator")
+  accounts                 Account[]
+  memberships              Member[]
+  invitationsSent          Invitation[]
+  contractTemplatesUpdated ContractTemplate[]
+  feedbacks                Feedback[]
+  auditLogsAsActor         AuditLog[]         @relation("AuditActor")
+  auditLogsImpersonated    AuditLog[]         @relation("AuditImpersonator")
+
+  @@map("users")
+}
+
+model Session {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token                String   @unique @db.VarChar(255)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+  ipAddress            String?  @map("ip_address") @db.VarChar(45)
+  userAgent            String?  @map("user_agent")
+  userId               String   @map("user_id") @db.Uuid
+  /// Organization plugin
+  activeOrganizationId String?  @map("active_organization_id") @db.Uuid
+  /// Admin plugin: platform admin impersonating this session
+  impersonatedBy       String?  @map("impersonated_by_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user               User          @relation("SessionUser", fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganization Organization? @relation(fields: [activeOrganizationId], references: [id], onDelete: SetNull)
+  impersonator       User?         @relation("SessionImpersonator", fields: [impersonatedBy], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([activeOrganizationId])
+  @@index([impersonatedBy])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Id of the account at the provider
+  accountId             String    @map("account_id") @db.VarChar(255)
+  /// credential | google
+  providerId            String    @map("provider_id") @db.VarChar(100)
+  userId                String    @map("user_id") @db.Uuid
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz(6)
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz(6)
+  scope                 String?
+  /// Hash, only for providerId = credential
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String   @db.VarChar(320)
+  value      String
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+// ───────────────────────────── TENANCY ───────────────────────────────────
+
+model Organization {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String    @db.VarChar(255)
+  slug         String    @unique @db.VarChar(100)
+  logo         String?
+  /// Guest/demo workspace
+  isDemo       Boolean   @default(false) @map("is_demo")
+  /// Cleanup job deletes expired demo organizations (TTL 24h). Delete storage objects first.
+  demoExpiresAt DateTime? @map("demo_expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sessions         Session[]
+  members          Member[]
+  invitations      Invitation[]
+  clients          Client[]
+  occupants        Occupant[]
+  agencies         Agency[]
+  properties       Property[]
+  storedFiles      StoredFile[]
+  contractTemplate ContractTemplate?
+  feedbacks        Feedback[]
+  auditLogs        AuditLog[]
+
+  @@index([isDemo, demoExpiresAt])
+  @@map("organizations")
+}
+
+model Member {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  /// Organization plugin: owner | admin | member. May be comma-separated: keep as string.
+  role           String   @default("member") @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientsCreated  Client[]     @relation("ClientCreatedBy")
+  propertiesCreated Property[] @relation("PropertyCreatedBy")
+  filesUploaded   StoredFile[] @relation("FileUploadedBy")
+
+  /// Target of the composite FKs used for authorship. Not generated by Better Auth.
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("members")
+}
+
+model Invitation {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  email          String           @db.VarChar(320)
+  role           String           @default("member") @db.VarChar(100)
+  status         InvitationStatus @default(pending)
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(6)
+  inviterId      String           @map("inviter_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter      User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, email])
+  @@index([inviterId])
+  @@map("invitations")
+}
+
+// ───────────────────────────── CLIENTS & PARTIES ─────────────────────────
+
+model Client {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  createdById    String     @map("created_by_id") @db.Uuid
+  name           String     @db.VarChar(255)
+  personType     PersonType @default(individual) @map("person_type")
+  /// CPF or CNPJ (digits only)
+  document       String?    @db.VarChar(20)
+  email          String?    @db.VarChar(320)
+  whatsapp       String?    @db.VarChar(30)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    Member       @relation("ClientCreatedBy", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: NoAction)
+  properties   Property[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, document])
+  @@index([organizationId, createdById])
+  @@map("clients")
+}
+
+/// Person who occupies a property: tenant of a conventional contract or guest of a short-stay reservation.
+model Occupant {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(255)
+  document       String?  @db.VarChar(20)
+  email          String?  @db.VarChar(320)
+  phone          String?  @db.VarChar(30)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contracts    Contract[]
+  reservations Reservation[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, document])
+  @@map("occupants")
+}
+
+/// Real-estate agencies that manage properties.
+model Agency {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  name           String @db.VarChar(255)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  properties   Property[]
+
+  @@unique([id, organizationId])
+  @@unique([organizationId, name])
+  @@map("agencies")
+}
+
+// ───────────────────────────── LOOKUPS ───────────────────────────────────
+
+/// Seeded with the ~5,570 Brazilian municipalities. City determines state (3NF).
+model City {
+  /// 7-digit IBGE municipality code
+  ibgeCode Int    @id @map("ibge_code")
+  name     String @db.VarChar(150)
+  state    String @db.Char(2)
+
+  addresses PropertyAddress[]
+
+  @@unique([state, name])
+  @@map("cities")
+}
+
+/// Seeded lookup: Apartment, House, Penthouse, Office, Store, Warehouse, Farm...
+model PropertySubtype {
+  id           Int          @id @default(autoincrement())
+  propertyType PropertyType @map("property_type")
+  name         String       @db.VarChar(100)
+
+  properties Property[]
+
+  @@unique([propertyType, name])
+  /// Target of the composite FK: a subtype always matches the property type
+  @@unique([id, propertyType])
+  @@map("property_subtypes")
+}
+
+/// Seeded rule table: which usage types are allowed for each property type.
+model PropertyTypeUsage {
+  propertyType PropertyType @map("property_type")
+  usageType    UsageType    @map("usage_type")
+
+  properties Property[]
+
+  @@id([propertyType, usageType])
+  @@map("property_type_usages")
+}
+
+/// Seeded. The category defines revenue vs expense.
+model TransactionCategory {
+  id              Int             @id @default(autoincrement())
+  transactionType TransactionType @map("transaction_type")
+  name            String          @db.VarChar(100)
+
+  transactions Transaction[]
+
+  @@unique([transactionType, name])
+  @@map("transaction_categories")
+}
+
+// ───────────────────────────── PROPERTIES ────────────────────────────────
+
+model Property {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String             @map("organization_id") @db.Uuid
+  createdById         String             @map("created_by_id") @db.Uuid
+  /// Optional owner/client of the property
+  clientId            String?            @map("client_id") @db.Uuid
+  /// Optional managing agency
+  agencyId            String?            @map("agency_id") @db.Uuid
+  name                String             @db.VarChar(255)
+  propertyType        PropertyType       @map("property_type")
+  subtypeId           Int?               @map("subtype_id")
+  /// Must be allowed for propertyType (PropertyTypeUsage)
+  usageType           UsageType          @map("usage_type")
+  /// CHECK > 0 AND <= 100 (manual-constraints.sql)
+  ownershipPercentage Decimal            @default(100) @map("ownership_percentage") @db.Decimal(5, 2)
+  /// m2 (hectares when propertyType = rural)
+  totalArea           Decimal?           @map("total_area") @db.Decimal(12, 2)
+  /// m2, used for price per m2
+  privateArea         Decimal?           @map("private_area") @db.Decimal(12, 2)
+  bedrooms            Int?               @db.SmallInt
+  suites              Int?               @db.SmallInt
+  bathrooms           Int?               @db.SmallInt
+  parkingSpaces       Int?               @map("parking_spaces") @db.SmallInt
+  /// Only for propertyType = parking
+  parkingSpotLabel    String?            @map("parking_spot_label") @db.VarChar(50)
+  builtYear           Int?               @map("built_year") @db.SmallInt
+  conservationState   ConservationState? @map("conservation_state")
+  /// Typed manually; null = not appraised yet
+  estimatedValueCents BigInt?            @map("estimated_value_cents")
+  /// Condo, property tax, administration, insurance...
+  annualExpensesCents BigInt             @default(0) @map("annual_expenses_cents")
+  /// Expected occupancy, 0-100
+  occupancyRate       Decimal            @default(90) @map("occupancy_rate") @db.Decimal(5, 2)
+  rentalMode          RentalMode         @default(manual) @map("rental_mode")
+  notes               String?
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    Member            @relation("PropertyCreatedBy", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: NoAction)
+  client       Client?           @relation(fields: [clientId, organizationId], references: [id, organizationId], onDelete: NoAction)
+  agency       Agency?           @relation(fields: [agencyId, organizationId], references: [id, organizationId], onDelete: NoAction)
+  subtype      PropertySubtype?  @relation(fields: [subtypeId, propertyType], references: [id, propertyType], onDelete: Restrict)
+  allowedUsage PropertyTypeUsage @relation(fields: [propertyType, usageType], references: [propertyType, usageType], onDelete: Restrict)
+
+  manualRental PropertyManualRental?
+  address      PropertyAddress?
+  acquisition  PropertyAcquisition?
+  legalRecord  PropertyLegalRecord?
+  insurance    PropertyInsurance?
+  proposals    PropertyProposal[]
+  photos       PropertyPhoto[]
+  documents    PropertyDocument[]
+  contracts    Contract[]
+  reservations Reservation[]
+  transactions Transaction[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, createdById])
+  @@index([organizationId, clientId])
+  @@index([organizationId, agencyId])
+  @@index([organizationId, propertyType])
+  @@index([subtypeId])
+  @@map("properties")
+}
+
+/// Typed rent data, used while Property.rentalMode = manual. Kept when the mode is switched.
+model PropertyManualRental {
+  propertyId       String  @id @map("property_id") @db.Uuid
+  tenantName       String? @map("tenant_name") @db.VarChar(255)
+  monthlyRentCents BigInt  @default(0) @map("monthly_rent_cents")
+  /// 1-31
+  dueDay           Int?    @map("due_day") @db.SmallInt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("property_manual_rentals")
+}
+
+model PropertyAddress {
+  propertyId   String   @id @map("property_id") @db.Uuid
+  cityId       Int      @map("city_id")
+  postalCode   String?  @map("postal_code") @db.VarChar(9)
+  street       String   @db.VarChar(255)
+  number       String?  @db.VarChar(20)
+  complement   String?  @db.VarChar(100)
+  neighborhood String?  @db.VarChar(100)
+  /// null until geocoded
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  city     City     @relation(fields: [cityId], references: [ibgeCode], onDelete: Restrict)
+
+  @@index([cityId])
+  @@map("property_addresses")
+}
+
+/// One optional row per property. Cost and date feed the IRR calculation.
+model PropertyAcquisition {
+  propertyId      String          @id @map("property_id") @db.Uuid
+  acquisitionType AcquisitionType @map("acquisition_type")
+  /// Purchase date, or base date for inheritance (IRR period start)
+  acquiredOn      DateTime?       @map("acquired_on") @db.Date
+  /// Purchase price, or base cost for inheritance. null = IRR not available
+  costCents       BigInt?         @map("cost_cents")
+
+  property  Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  financing PropertyFinancing?
+
+  /// Target of the composite FK from PropertyFinancing
+  @@unique([propertyId, acquisitionType])
+  @@map("property_acquisitions")
+}
+
+/// Optional fact of a purchase or construction. Installment and outstanding balance are DERIVED.
+model PropertyFinancing {
+  propertyId          String             @id @map("property_id") @db.Uuid
+  /// Mirror of the acquisition type, kept in sync by the composite FK. CHECK IN (purchase, construction).
+  acquisitionType     AcquisitionType    @map("acquisition_type")
+  lender              String?            @db.VarChar(255)
+  financedAmountCents BigInt             @map("financed_amount_cents")
+  termMonths          Int                @map("term_months") @db.SmallInt
+  annualInterestRate  Decimal            @map("annual_interest_rate") @db.Decimal(7, 4)
+  amortizationSystem  AmortizationSystem @map("amortization_system")
+  firstInstallmentOn  DateTime           @map("first_installment_on") @db.Date
+
+  acquisition PropertyAcquisition @relation(fields: [propertyId, acquisitionType], references: [propertyId, acquisitionType], onDelete: Cascade, onUpdate: Cascade)
+
+  /// Required by Prisma for a one-to-one composite relation (redundant with the PK at database level)
+  @@unique([propertyId, acquisitionType])
+  @@map("property_financings")
+}
+
+model PropertyLegalRecord {
+  propertyId              String             @id @map("property_id") @db.Uuid
+  registrationStatus      RegistrationStatus @default(regular) @map("registration_status")
+  /// Only when irregular (CHECK)
+  irregularityDescription String?            @map("irregularity_description")
+  /// Matrícula
+  registryNumber          String?            @map("registry_number") @db.VarChar(50)
+  /// Cartório / CRI
+  registryOffice          String?            @map("registry_office") @db.VarChar(255)
+  notes                   String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("property_legal_records")
+}
+
+/// A row exists only when the property is insured.
+model PropertyInsurance {
+  propertyId  String  @id @map("property_id") @db.Uuid
+  description String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@map("property_insurances")
+}
+
+model PropertyProposal {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  propertyId   String       @map("property_id") @db.Uuid
+  proposalType ProposalType @map("proposal_type")
+  amountCents  BigInt       @map("amount_cents")
+  proposalDate DateTime     @map("proposal_date") @db.Date
+  contact      String?      @db.VarChar(255)
+  notes        String?
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, proposalDate])
+  @@map("property_proposals")
+}
+
+// ───────────────────────────── FILES ─────────────────────────────────────
+
+model StoredFile {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  uploadedById   String   @map("uploaded_by_id") @db.Uuid
+  /// Object key in S3-compatible storage (MinIO)
+  storageKey     String   @unique @map("storage_key") @db.VarChar(500)
+  fileName       String   @map("file_name") @db.VarChar(255)
+  mimeType       String   @map("mime_type") @db.VarChar(100)
+  sizeBytes      BigInt   @map("size_bytes")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy   Member       @relation("FileUploadedBy", fields: [organizationId, uploadedById], references: [organizationId, userId], onDelete: NoAction)
+
+  photos              PropertyPhoto[]
+  documents           PropertyDocument[]
+  contractPdfs        Contract[]
+  feedbackAttachments Feedback[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, uploadedById])
+  /// Orphan sweep: files older than 1h referenced by no photo/document/contract/feedback
+  @@index([createdAt])
+  @@map("stored_files")
+}
+
+model PropertyPhoto {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String   @map("property_id") @db.Uuid
+  fileId         String   @map("file_id") @db.Uuid
+  position       Int      @default(0) @db.SmallInt
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  property Property   @relation(fields: [propertyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  file     StoredFile @relation(fields: [fileId, organizationId], references: [id, organizationId], onDelete: NoAction)
+
+  @@unique([propertyId, fileId])
+  @@index([propertyId, position])
+  @@index([fileId, organizationId])
+  @@map("property_photos")
+}
+
+model PropertyDocument {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String   @map("property_id") @db.Uuid
+  fileId         String   @unique @map("file_id") @db.Uuid
+  /// Free label: deed, registry, tax, insurance...
+  category       String?  @db.VarChar(50)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  property Property   @relation(fields: [propertyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  file     StoredFile @relation(fields: [fileId, organizationId], references: [id, organizationId], onDelete: NoAction)
+
+  @@index([propertyId])
+  @@map("property_documents")
+}
+
+// ───────────────────────────── CONTRACTS & RESERVATIONS ──────────────────
+
+/// At most ONE active contract per property (partial unique index in manual-constraints.sql).
+/// History is never deleted: only property deletion cascades.
+model Contract {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  propertyId     String         @map("property_id") @db.Uuid
+  occupantId     String         @map("occupant_id") @db.Uuid
+  contractType   ContractType   @map("contract_type")
+  status         ContractStatus @default(active)
+  startDate      DateTime       @map("start_date") @db.Date
+  /// null = open-ended. CHECK end_date > start_date
+  endDate        DateTime?      @map("end_date") @db.Date
+  notes          String?
+  /// Generated contract PDF
+  pdfFileId      String?        @map("pdf_file_id") @db.Uuid
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  property Property    @relation(fields: [propertyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  occupant Occupant    @relation(fields: [occupantId, organizationId], references: [id, organizationId], onDelete: NoAction)
+  pdfFile  StoredFile? @relation(fields: [pdfFileId, organizationId], references: [id, organizationId], onDelete: NoAction)
+
+  rentTerms    ContractRentTerms?
+  reservations Reservation[]
+
+  @@unique([id, organizationId])
+  /// Target of the composite FK from Reservation
+  @@unique([id, propertyId])
+  /// Target of the composite FK from ContractRentTerms
+  @@unique([id, contractType])
+  @@index([propertyId, status])
+  @@index([organizationId, status])
+  @@index([occupantId, organizationId])
+  @@index([pdfFileId, organizationId])
+  @@map("contracts")
+}
+
+/// Rent terms exist only for conventional contracts (CHECK contract_type = conventional).
+model ContractRentTerms {
+  contractId       String           @id @map("contract_id") @db.Uuid
+  contractType     ContractType     @map("contract_type")
+  monthlyRentCents BigInt           @map("monthly_rent_cents")
+  /// 1-31
+  dueDay           Int              @map("due_day") @db.SmallInt
+  adjustmentIndex  AdjustmentIndex? @map("adjustment_index")
+
+  contract Contract @relation(fields: [contractId, contractType], references: [id, contractType], onDelete: Cascade)
+
+  /// Required by Prisma for a one-to-one composite relation (redundant with the PK at database level)
+  @@unique([contractId, contractType])
+  @@map("contract_rent_terms")
+}
+
+/// No overlap between confirmed reservations of the same property (EXCLUDE in manual-constraints.sql).
+/// Half-open range [checkIn, checkOut): same-day turnover is allowed.
+model Reservation {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  propertyId       String            @map("property_id") @db.Uuid
+  /// Optional short_stay contract of the SAME property (type validated in service)
+  contractId       String?           @map("contract_id") @db.Uuid
+  /// Guest
+  occupantId       String            @map("occupant_id") @db.Uuid
+  checkIn          DateTime          @map("check_in") @db.Date
+  /// CHECK check_out > check_in
+  checkOut         DateTime          @map("check_out") @db.Date
+  totalAmountCents BigInt            @default(0) @map("total_amount_cents")
+  status           ReservationStatus @default(confirmed)
+  notes            String?
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  property Property  @relation(fields: [propertyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  occupant Occupant  @relation(fields: [occupantId, organizationId], references: [id, organizationId], onDelete: NoAction)
+  contract Contract? @relation(fields: [contractId, propertyId], references: [id, propertyId], onDelete: NoAction)
+
+  @@index([propertyId, checkIn])
+  @@index([organizationId, checkIn])
+  @@index([contractId, propertyId])
+  @@index([occupantId, organizationId])
+  @@map("reservations")
+}
+
+// ───────────────────────────── FINANCE ───────────────────────────────────
+
+/// Only non-operational items. Rent, condo and property tax live on the property / contract.
+model Transaction {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  propertyId       String    @map("property_id") @db.Uuid
+  /// Category defines revenue vs expense
+  categoryId       Int       @map("category_id")
+  /// Always positive. CHECK > 0
+  amountCents      BigInt    @map("amount_cents")
+  occurredOn       DateTime  @map("occurred_on") @db.Date
+  description      String?   @db.VarChar(500)
+  /// Monthly, from occurredOn until recurrenceEndsOn
+  isRecurring      Boolean   @default(false) @map("is_recurring")
+  /// null = still running
+  recurrenceEndsOn DateTime? @map("recurrence_ends_on") @db.Date
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  property Property            @relation(fields: [propertyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  category TransactionCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([propertyId, occurredOn])
+  @@index([organizationId, occurredOn])
+  @@index([categoryId])
+  @@map("transactions")
+}
+
+// ───────────────────────────── SETTINGS, FEEDBACK, AUDIT ─────────────────
+
+/// One contract PDF template per organization.
+model ContractTemplate {
+  organizationId String   @id @map("organization_id") @db.Uuid
+  header         String
+  /// Sanitized HTML
+  clauses        String
+  footer         String
+  updatedById    String?  @map("updated_by_id") @db.Uuid
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy    User?        @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("contract_templates")
+}
+
+model Feedback {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  userId           String         @map("user_id") @db.Uuid
+  message          String
+  attachmentFileId String?        @map("attachment_file_id") @db.Uuid
+  status           FeedbackStatus @default(open)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attachment   StoredFile?  @relation(fields: [attachmentFileId, organizationId], references: [id, organizationId], onDelete: NoAction)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([attachmentFileId, organizationId])
+  @@map("feedbacks")
+}
+
+/// Retention 12 months. Actor columns are deliberate snapshots, not redundancy.
+model AuditLog {
+  id              BigInt           @id @default(autoincrement())
+  /// null = platform-level event. Logs of a deleted organization are deleted with it.
+  organizationId  String?          @map("organization_id") @db.Uuid
+  actorUserId     String?          @map("actor_user_id") @db.Uuid
+  /// Snapshot at the time of the action (immutable trail)
+  actorName       String?          @map("actor_name") @db.VarChar(255)
+  actorEmail      String?          @map("actor_email") @db.VarChar(320)
+  /// Snapshot of the member role
+  actorRole       String?          @map("actor_role") @db.VarChar(100)
+  /// Set when a platform admin acted via impersonation
+  impersonatedById String?         @map("impersonated_by_id") @db.Uuid
+  action          AuditAction
+  entityType      AuditEntityType? @map("entity_type")
+  /// Polymorphic reference, intentionally without FK
+  entityId        String?          @map("entity_id") @db.Uuid
+  details         String?
+  ipAddress       String?          @map("ip_address") @db.VarChar(45)
+  userAgent       String?          @map("user_agent") @db.VarChar(500)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  impersonator User?         @relation("AuditImpersonator", fields: [impersonatedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action])
+  @@index([impersonatedById])
+  @@map("audit_logs")
+}
