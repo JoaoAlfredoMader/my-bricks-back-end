@@ -1,19 +1,36 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import type { Env } from "./config/env.js";
 import type { PrismaClient } from "./lib/prisma.js";
+import type { Auth } from "./modules/auth/auth.js";
+import { createAuthRoutes } from "./modules/auth/auth.route.js";
+import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
 import { createHealthRoutes } from "./modules/health/health.route.js";
+import { createSessionRoutes } from "./modules/session/session.route.js";
 import { AppError } from "./shared/errors/app-error.js";
+import type { AppEnv } from "./shared/http/app-env.js";
+import { loadAuthContext } from "./shared/http/auth.middleware.js";
 
 export interface AppDependencies {
   prisma: PrismaClient;
+  env: Pick<Env, "FRONTEND_URL">;
+  auth: Auth;
+  provisioning: ProvisioningService;
 }
 
-export function createApp({ prisma }: AppDependencies) {
-  const app = new Hono();
+export function createApp({ prisma, env, auth, provisioning }: AppDependencies) {
+  const app = new Hono<AppEnv>();
 
   app.use(logger());
+  app.use("/api/*", cors({ origin: env.FRONTEND_URL, credentials: true }));
 
   app.route("/health", createHealthRoutes(prisma));
+
+  // Better Auth answers on its own; everything else under /api gets the session context.
+  app.route("/api/auth", createAuthRoutes(auth));
+  app.use("/api/*", loadAuthContext(auth, provisioning));
+  app.route("/api/me", createSessionRoutes());
 
   app.notFound((c) =>
     c.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404),

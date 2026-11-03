@@ -2,10 +2,19 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
 import { createPrismaClient } from "./lib/prisma.js";
+import { createAuth } from "./modules/auth/auth.js";
+import { createProvisioningRepository } from "./modules/auth/provisioning.repository.js";
+import { createProvisioningService } from "./modules/auth/provisioning.service.js";
 
 const env = loadEnv();
 const prisma = createPrismaClient(env.DATABASE_URL);
-const app = createApp({ prisma });
+
+// Composition root: dependencies are wired by hand.
+const provisioning = createProvisioningService(createProvisioningRepository(prisma), {
+  demoTtlHours: env.DEMO_TTL_HOURS,
+});
+const auth = createAuth({ prisma, env, provisioning });
+const app = createApp({ prisma, env, auth, provisioning });
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`MyBricks API listening on http://localhost:${info.port}`);
