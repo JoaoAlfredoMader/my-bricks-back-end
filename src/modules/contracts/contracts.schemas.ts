@@ -1,31 +1,11 @@
 import { z } from "zod";
 import { AdjustmentIndex, ContractStatus, ContractType } from "../../generated/prisma/enums.js";
-import { isValidCnpj, isValidCpf, normalizeDocument } from "../../shared/validation/brazilian-document.js";
 import { optionalText } from "../../shared/validation/optional-text.js";
+import { occupantInputSchema } from "../occupants/occupant-input.js";
 
 /** Calendar date as `YYYY-MM-DD`. ISO dates compare correctly as plain strings. */
 const date = z.iso.date();
 const positiveCents = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
-
-const occupantSchema = z.object({
-  name: z.string().trim().min(2).max(255),
-  document: optionalText(
-    z
-      .string()
-      .trim()
-      .max(24)
-      .transform(normalizeDocument)
-      .refine((value) => isValidCpf(value) || isValidCnpj(value), "Invalid CPF or CNPJ"),
-  ),
-  email: optionalText(z.string().trim().max(320).pipe(z.email()).transform((value) => value.toLowerCase())),
-  phone: optionalText(
-    z
-      .string()
-      .trim()
-      .transform((value) => value.replace(/\D/g, ""))
-      .pipe(z.string().regex(/^\d{10,15}$/, "Enter the phone number with area code")),
-  ),
-});
 
 const rentTermsFields = {
   monthlyRentCents: positiveCents,
@@ -43,7 +23,7 @@ export const createContractSchema = z
     /** Reuse an existing occupant... */
     occupantId: z.uuid().optional(),
     /** ...or describe a new one (an existing occupant with the same document is reused). */
-    occupant: occupantSchema.optional(),
+    occupant: occupantInputSchema.optional(),
     /** Required for conventional contracts, not allowed for short-stay ones. */
     rentTerms: z.object(rentTermsFields).nullish(),
   })

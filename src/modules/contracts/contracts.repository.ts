@@ -8,6 +8,8 @@ import type {
 } from "../../generated/prisma/enums.js";
 import type { PrismaClient } from "../../lib/prisma.js";
 import { AppError } from "../../shared/errors/app-error.js";
+import type { OccupantRef } from "../occupants/occupant-input.js";
+import { createOccupantLookup, type OccupantLookup } from "../occupants/occupants.repository.js";
 
 const select = {
   id: true,
@@ -32,13 +34,6 @@ export interface ContractScope {
   propertyCreatedById?: string;
 }
 
-export interface OccupantData {
-  name: string;
-  document: string | null;
-  email: string | null;
-  phone: string | null;
-}
-
 export interface RentTermsData {
   monthlyRentCents: bigint;
   dueDay: number;
@@ -53,7 +48,7 @@ export interface NewContractData {
   notes: string | null;
   /** A conventional contract has rent terms; a short-stay one never does. */
   rentTerms: RentTermsData | null;
-  occupant: { existingId: string } | { create: OccupantData };
+  occupant: OccupantRef;
 }
 
 export interface ContractPatch {
@@ -76,7 +71,7 @@ export interface ContractListQuery {
   take: number;
 }
 
-export interface ContractsRepository {
+export interface ContractsRepository extends OccupantLookup {
   list(scope: ContractScope, query: ContractListQuery): Promise<{ items: ContractRecord[]; total: number }>;
   findById(scope: ContractScope, id: string): Promise<ContractRecord | null>;
   /**
@@ -97,8 +92,6 @@ export interface ContractsRepository {
   ): Promise<boolean>;
 
   findProperty(scope: ContractScope, propertyId: string): Promise<PropertyForContract | null>;
-  occupantExists(organizationId: string, occupantId: string): Promise<boolean>;
-  findOccupantIdByDocument(organizationId: string, document: string): Promise<string | null>;
 }
 
 function whereFor(scope: ContractScope): Prisma.ContractWhereInput {
@@ -222,13 +215,6 @@ export function createContractsRepository(prisma: PrismaClient): ContractsReposi
       });
     },
 
-    async occupantExists(organizationId, occupantId) {
-      return (await prisma.occupant.count({ where: { id: occupantId, organizationId } })) > 0;
-    },
-
-    async findOccupantIdByDocument(organizationId, document) {
-      const occupant = await prisma.occupant.findFirst({ where: { organizationId, document }, select: { id: true } });
-      return occupant?.id ?? null;
-    },
+    ...createOccupantLookup(prisma),
   };
 }

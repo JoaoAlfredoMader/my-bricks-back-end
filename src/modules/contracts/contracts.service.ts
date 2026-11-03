@@ -1,6 +1,7 @@
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TenantScope } from "../../shared/http/tenant.js";
 import { numberToCents } from "../../shared/money.js";
+import { resolveOccupantRef } from "../occupants/occupant-input.js";
 import { type ContractCreatedDto, type ContractDto, type Page, toContractDto } from "./contracts.dto.js";
 import type {
   ContractPatch,
@@ -107,7 +108,7 @@ export function createContractsService(repository: ContractsRepository): Contrac
         );
       }
 
-      const occupant = await resolveOccupant(repository, tenant.organizationId, input);
+      const occupant = await resolveOccupantRef(repository, tenant.organizationId, input);
 
       const rentTerms: RentTermsData | null = input.rentTerms
         ? {
@@ -169,34 +170,6 @@ export function createContractsService(repository: ContractsRepository): Contrac
     async cancel(tenant, id) {
       assertActive(await loadOrFail(visibleScope(tenant), id));
       return closeAndReload(tenant, id, { status: "cancelled" });
-    },
-  };
-}
-
-/** Picks an existing occupant or describes a new one. A known document reuses the stored occupant. */
-async function resolveOccupant(
-  repository: ContractsRepository,
-  organizationId: string,
-  input: CreateContractInput,
-): Promise<NewContractData["occupant"]> {
-  if (input.occupantId) {
-    if (!(await repository.occupantExists(organizationId, input.occupantId))) {
-      throw AppError.validation([{ path: "occupantId", message: "Occupant not found" }]);
-    }
-    return { existingId: input.occupantId };
-  }
-
-  const occupant = input.occupant!;
-  if (occupant.document) {
-    const existingId = await repository.findOccupantIdByDocument(organizationId, occupant.document);
-    if (existingId) return { existingId };
-  }
-  return {
-    create: {
-      name: occupant.name,
-      document: occupant.document ?? null,
-      email: occupant.email ?? null,
-      phone: occupant.phone ?? null,
     },
   };
 }
