@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { AcquisitionType, ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
+import {
+  AcquisitionType,
+  AmortizationSystem,
+  ConservationState,
+  PropertyType,
+  RegistrationStatus,
+  RentalMode,
+  UsageType,
+} from "../../generated/prisma/enums.js";
 import { optionalText } from "../../shared/validation/optional-text.js";
 
 const cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -39,6 +47,41 @@ const acquisitionSchema = z
       context.addIssue({ code: "custom", path: ["acquiredOn"], message: "An inheritance needs a base date" });
     }
   });
+
+const legalRecordSchema = z
+  .object({
+    registrationStatus: z.enum(RegistrationStatus).default("regular"),
+    /** Only for irregular properties. */
+    irregularityDescription: optionalText(z.string().trim().max(10_000)),
+    /** Matrícula. */
+    registryNumber: optionalText(z.string().trim().max(50)),
+    /** Cartório / CRI. */
+    registryOffice: optionalText(z.string().trim().max(255)),
+    notes: optionalText(z.string().trim().max(10_000)),
+  })
+  .superRefine((input, context) => {
+    if (input.irregularityDescription && input.registrationStatus !== "irregular") {
+      context.addIssue({
+        code: "custom",
+        path: ["irregularityDescription"],
+        message: "Only an irregular property has an irregularity description",
+      });
+    }
+  });
+
+/** Having an insurance row means the property is insured; the description is free text. */
+const insuranceSchema = z.object({ description: optionalText(z.string().trim().max(10_000)) });
+
+/** Only for properties acquired by purchase or construction. */
+const financingSchema = z.object({
+  lender: optionalText(z.string().trim().max(255)),
+  financedAmountCents: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  termMonths: z.number().int().min(1).max(1200),
+  /** Nominal rate per year, in percent (10.5 = 10.5% a year). */
+  annualInterestRate: z.number().min(0).max(999.9999),
+  amortizationSystem: z.enum(AmortizationSystem),
+  firstInstallmentOn: date,
+});
 
 const manualRentalSchema = z.object({
   tenantName: optionalText(z.string().trim().max(255)),
@@ -81,6 +124,9 @@ export const createPropertySchema = z.object({
   address: addressSchema.nullish(),
   manualRental: manualRentalSchema.nullish(),
   acquisition: acquisitionSchema.nullish(),
+  legalRecord: legalRecordSchema.nullish(),
+  insurance: insuranceSchema.nullish(),
+  financing: financingSchema.nullish(),
 });
 
 /** `null` on a nullable field clears it; on `address` / `manualRental` / `acquisition` it removes the child. */
@@ -90,6 +136,9 @@ export const updatePropertySchema = z
     address: addressSchema.nullable(),
     manualRental: manualRentalSchema.nullable(),
     acquisition: acquisitionSchema.nullable(),
+    legalRecord: legalRecordSchema.nullable(),
+    insurance: insuranceSchema.nullable(),
+    financing: financingSchema.nullable(),
   })
   .partial()
   .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
