@@ -23,7 +23,7 @@ import { loadAuthContext } from "./shared/http/auth.middleware.js";
 
 export interface AppDependencies {
   prisma: PrismaClient;
-  env: Pick<Env, "FRONTEND_URL">;
+  env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV">>;
   auth: Auth;
   provisioning: ProvisioningService;
 }
@@ -31,7 +31,8 @@ export interface AppDependencies {
 export function createApp({ prisma, env, auth, provisioning }: AppDependencies) {
   const app = new Hono<AppEnv>();
 
-  app.use(logger());
+  // Request logs would drown the test output.
+  if (env.NODE_ENV !== "test") app.use(logger());
   app.use("/api/*", cors({ origin: env.FRONTEND_URL, credentials: true }));
 
   app.route("/health", createHealthRoutes(prisma));
