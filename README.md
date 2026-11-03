@@ -1,0 +1,77 @@
+# MyBricks API
+
+Back-end of **MyBricks**, a real-estate portfolio management platform: properties, clients, rental contracts and short-stay reservations, finances and portfolio KPIs (yield, cap rate, NOI, IRR).
+
+> Portfolio project. Front-end: [my-bricks-front-end](https://github.com/JoaoAlfredoMader/my-bricks-front-end).
+
+## Stack
+
+- **Hono** on Node.js (TypeScript, ESM)
+- **Prisma 7** + **PostgreSQL 17**
+- **Better Auth** (organization, admin and anonymous plugins), wired in a later step
+- **Docker Compose** for local services
+- **Zod** for validation
+
+## Architecture
+
+Layered API. Dependencies point downwards and are wired by hand with factories (no DI framework).
+
+```
+route  →  controller  →  service  →  repository
+```
+
+| Layer | Responsibility |
+|---|---|
+| Route | HTTP binding: path, input validation, serialization |
+| Controller | Receives validated input (never the Hono `Context`), calls the service, maps the result to status + DTO |
+| Service | Business rules and calculations |
+| Repository | The only layer that talks to Prisma |
+
+```
+src/
+├── app.ts                 # Hono app factory (routes, error handling)
+├── server.ts              # process entry point
+├── config/env.ts          # validated environment
+├── lib/prisma.ts          # Prisma client with the pg driver adapter
+├── shared/errors/         # typed domain errors
+└── modules/<feature>/     # route, controller, service, repository
+```
+
+## Getting started
+
+```bash
+cp .env.example .env
+npm install
+npm run db:up          # PostgreSQL on localhost:5433
+npm run db:generate    # Prisma client -> src/generated/prisma
+npm run db:migrate     # apply migrations
+npm run dev            # http://localhost:3000/health
+```
+
+## Database
+
+The model is normalized (3NF) and documented in [`docs/database/mybricks-database.dbml`](docs/database/mybricks-database.dbml), which can be pasted into [dbdiagram.io](https://dbdiagram.io).
+
+- **Multi-tenant by organization.** Every foreign key between tenant tables is composite `(x_id, organization_id)`, so a row can never reference a parent of another organization.
+- **Authorship** references `members(organization_id, user_id)`: the author must belong to the same organization.
+- **Money** is stored as integer cents (`BigInt`). Convert in the DTO layer: `JSON.stringify` cannot serialize `BigInt`.
+- **Derived values are never stored** (property status, IRR, cap rate, NOI, yield, financing installment and balance).
+- **Rules Prisma cannot express** (one active contract per property, no overlapping confirmed reservations, `CHECK` constraints, case-insensitive unique e-mail) live in the hand-written migration `prisma/migrations/*_manual_constraints`. Prisma does not treat them as drift.
+- **Deleting an organization** must delete in order inside one transaction (properties, stored files, clients, occupants, agencies, organization). Postgres checks each cascade step separately, so a plain `DELETE` of the organization fails by design.
+
+## Scripts
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | API with reload |
+| `npm run build` / `npm start` | compile and run |
+| `npm run typecheck` | TypeScript check |
+| `npm run db:up` / `db:down` | start / stop local PostgreSQL |
+| `npm run db:migrate` | create/apply migrations (dev) |
+| `npm run db:deploy` | apply migrations (production) |
+| `npm run db:studio` | Prisma Studio |
+
+## Conventions
+
+- Code, API and commits in English; UI texts in pt-BR (front-end).
+- Conventional Commits.
