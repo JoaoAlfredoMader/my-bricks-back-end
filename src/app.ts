@@ -15,6 +15,7 @@ import { createKpisRoutes } from "./modules/kpis/kpis.route.js";
 import { createLookupsRoutes } from "./modules/lookups/lookups.route.js";
 import { createOccupantsRoutes } from "./modules/occupants/occupants.route.js";
 import { createPropertiesRoutes } from "./modules/properties/properties.route.js";
+import { createProposalsRoutes } from "./modules/proposals/proposals.route.js";
 import { createReservationsRoutes } from "./modules/reservations/reservations.route.js";
 import { createSessionRoutes } from "./modules/session/session.route.js";
 import { createTransactionsRoutes } from "./modules/transactions/transactions.route.js";
@@ -48,6 +49,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/kpis", createKpisRoutes(prisma));
   app.route("/api/lookups", createLookupsRoutes(prisma));
   app.route("/api/properties", createPropertiesRoutes(prisma));
+  app.route("/api/properties/:propertyId/proposals", createProposalsRoutes(prisma));
   app.route("/api/occupants", createOccupantsRoutes(prisma));
   app.route("/api/reservations", createReservationsRoutes(prisma));
   app.route("/api/transactions", createTransactionsRoutes(prisma));
