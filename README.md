@@ -49,6 +49,24 @@ npm run db:seed        # reference data (idempotent)
 npm run dev            # http://localhost:3000/health
 ```
 
+## API reference (OpenAPI)
+
+- **`GET /api/openapi.json`**: the OpenAPI 3.1 document, built at start-up from the Zod schemas the routes already validate with (public: it describes the API, it exposes no data).
+- **`GET /api/docs`**: a readable reference page (Scalar) for that document. Better Auth documents its own endpoints (`/api/auth/*`) at `/api/auth/reference`.
+- **`docs/openapi.json`** is a committed copy (`npm run openapi:export` regenerates it), so the front-end can generate its typed client from the repository:
+
+  ```bash
+  npx openapi-typescript docs/openapi.json -o src/api/schema.d.ts
+  ```
+
+  Every operation has an `operationId` (`listClients`, `createProperty`, `getPortfolioKpis`...), which is the name of the function in a generated client. Request bodies and responses are named components (`CreatePropertyRequest`, `Property`, `PropertyPage`, `ErrorResponse`...).
+- **How it stays true.** `src/openapi/routes.ts` describes each endpoint once (method, path, who may call it, the request schemas the route validates with, the response schema). The response schemas are checked against the TypeScript DTOs the services return, and tests then:
+  - compare the registry with the routes the app really registers, **in both directions**: a new endpoint without an entry, or an entry for a route that does not exist, fails the build;
+  - validate the document as OpenAPI 3.1 and check that every reference resolves;
+  - **call every operation against the real API** (the guest workspace with the sample portfolio) and check each answer: the status must be documented, the body must parse with its response schema and carry **nothing the schema does not describe**, errors must be an `ErrorResponse`, and every operation must have been exercised;
+  - fail when `docs/openapi.json` is stale.
+- To add an endpoint: write the route, add its entry to `OPERATIONS` (and `output()` / `input()` for new schemas), run `npm run openapi:export`.
+
 ## Authentication
 
 [Better Auth](https://www.better-auth.com) mounted at `/api/auth/*`, with the `organization`, `admin` and `anonymous` plugins. E-mail/password always; Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set.
@@ -296,6 +314,7 @@ npm run test:watch  # re-run on change
 | `npm run typecheck` | TypeScript check |
 | `npm test` / `test:watch` | Vitest suite (see Tests) |
 | `npm run admin:create` | create or promote the platform operator (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) |
+| `npm run openapi:export` | regenerate `docs/openapi.json` |
 | `npm run maintenance` | one housekeeping run (expired demos, orphan files, audit retention, stale sessions) |
 | `npm run db:up` / `db:down` | start / stop local PostgreSQL |
 | `npm run db:migrate` | create/apply migrations (dev) |
