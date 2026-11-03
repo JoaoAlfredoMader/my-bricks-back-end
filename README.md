@@ -105,6 +105,23 @@ Read-only reference data for the forms (shared by every organization).
 - Cross-field rules are checked against the state after the write: the usage must be allowed for the property type, the subtype must belong to it, only parking properties have a spot label, and manual rental data is only accepted in manual mode. The client must exist in the organization and be visible to the caller.
 - Not covered yet: acquisition, financing, legal record, insurance, proposals, photos and documents (the last two wait for the object storage choice), agencies, geocoding.
 
+### Contracts — `/api/contracts`
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | `propertyId`, `status`, `contractType`, `page`, `pageSize`; newest start first |
+| `POST` | `/` | `propertyId`, `contractType`, `startDate`, optional `endDate`, `notes`; the occupant as `occupantId` **or** a new `occupant`; `rentTerms` for conventional contracts |
+| `GET` | `/:id` | |
+| `PATCH` | `/:id` | active contracts only: `endDate` (`null` = open-ended), `notes`, part of `rentTerms` |
+| `POST` | `/:id/end` | optional `endDate`; active contracts only |
+| `POST` | `/:id/cancel` | active contracts only |
+
+- Contracts are **never deleted**: they are ended or cancelled, so the history stays. Deleting a property is the only thing that removes them.
+- Creating a contract on a property that already has an active one **ends the old one in the same transaction** (its end date moves to the new start when that shortens it) and answers with `replacedContractId`. At most one active contract per property is also enforced by the database, so two concurrent requests cannot break it (the loser gets `409`).
+- The property must be in `contract` rental mode and let out (not `own_use` / `loan_for_use`). `short_stay` contracts need a `short_stay` property and carry no rent terms; every other contract is `conventional` and needs them.
+- An occupant with a document already stored in the organization is reused, not duplicated. Members only see occupants that appear in contracts of properties they created (`GET /api/occupants`).
+- Calendar dates are `YYYY-MM-DD`; money is integer cents.
+
 ## Database
 
 The model is normalized (3NF) and documented in [`docs/database/mybricks-database.dbml`](docs/database/mybricks-database.dbml), which can be pasted into [dbdiagram.io](https://dbdiagram.io).
