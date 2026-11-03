@@ -2,7 +2,8 @@ import { validator } from "hono/validator";
 import type { ZodType, z } from "zod";
 import { AppError } from "../errors/app-error.js";
 
-type ValidationTarget = "json" | "query" | "param";
+/** `form` is a multipart or url-encoded body; files arrive as `File` objects. */
+type ValidationTarget = "json" | "query" | "param" | "form";
 
 /**
  * Route-layer input validation. Hands the parsed (and transformed) value to the handler,
