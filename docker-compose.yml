@@ -1,0 +1,25 @@
+name: mybricks
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mybricks}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mybricks}
+      POSTGRES_DB: ${POSTGRES_DB:-mybricks}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# Object storage (photos, documents, contract PDFs) is not wired yet:
+# MinIO no longer publishes official images, the S3-compatible replacement is still to be chosen.
+
+volumes:
+  postgres-data:
