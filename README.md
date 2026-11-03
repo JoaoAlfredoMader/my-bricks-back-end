@@ -81,6 +81,30 @@ npm run dev            # http://localhost:3000/health
 
 `document` is a CPF for individuals and a CNPJ for companies, validated with check digits (alphanumeric CNPJ supported) and stored without punctuation. It is unique per organization. `whatsapp` is stored as digits only.
 
+### Lookups — `/api/lookups`
+
+Read-only reference data for the forms (shared by every organization).
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/cities` | `search` (min. 2 characters, accent-insensitive), optional `state` (UF), `limit` (max 50) |
+| `GET` | `/property-catalog` | for each property type: its subtypes and the usages allowed for it |
+
+### Properties — `/api/properties`
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | `search` (name), `propertyType`, `usageType`, `clientId`, `page`, `pageSize` |
+| `POST` | `/` | required: `name`, `propertyType`, `usageType`. Optional: details, money, `clientId`, nested `address` and `manualRental` |
+| `GET` | `/:id` | |
+| `PATCH` | `/:id` | any subset. `null` clears a nullable field; `address` / `manualRental` are replaced as a whole, `null` removes them |
+| `DELETE` | `/:id` | removes the property and everything attached to it |
+
+- Money fields (`*Cents`) are integer cents; percentages and areas are plain numbers.
+- `status` is derived on every read: `own_use` and `loan_for_use` follow the usage; otherwise `rented` when there is a tenant or rent (manual mode) or an active contract (contract mode), else `vacant`.
+- Cross-field rules are checked against the state after the write: the usage must be allowed for the property type, the subtype must belong to it, only parking properties have a spot label, and manual rental data is only accepted in manual mode. The client must exist in the organization and be visible to the caller.
+- Not covered yet: acquisition, financing, legal record, insurance, proposals, photos and documents (the last two wait for the object storage choice), agencies, geocoding.
+
 ## Database
 
 The model is normalized (3NF) and documented in [`docs/database/mybricks-database.dbml`](docs/database/mybricks-database.dbml), which can be pasted into [dbdiagram.io](https://dbdiagram.io).
