@@ -1,0 +1,838 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// MyBricks — Database schema v3 (PostgreSQL) — DBML for dbdiagram.io
+// ═══════════════════════════════════════════════════════════════════════════
+// Conventions
+//  - Tables: plural snake_case. Columns: snake_case. Enum values: snake_case.
+//  - Primary keys: uuid (Better Auth tables: database-generated uuid). Lookups: int.
+//  - Money: bigint in integer cents (BRL). Percentages: decimal(5,2).
+//  - Dates without time: date. Instants: timestamptz.
+//  - Tenant = organization. Tables queried on their own (properties, clients,
+//    contracts, reservations, transactions, stored_files...) carry organization_id.
+//    Every FK between tenant tables is COMPOSITE (x_id, organization_id) so a row can
+//    never reference a parent of another organization.
+//  - created_by_id / uploaded_by_id reference MEMBERS (organization_id, user_id), not
+//    users: the author must belong to the same organization.
+//  - ON DELETE NO ACTION on tenant-internal FKs: deleting a single parent that is still
+//    referenced fails. NOTE (tested): a plain "DELETE organization" cascade still fails
+//    because Postgres checks each cascade step separately. Demo/org cleanup must delete
+//    in order (properties, stored_files, clients, occupants, agencies, organization)
+//    inside one transaction, or declare these FKs DEFERRABLE INITIALLY DEFERRED.
+//  - One-to-one relations are written child.fk > parent.pk (never "-"): the "-" form
+//    exports with the foreign key on the wrong side.
+//  - Visibility: owner/admin members see the whole organization; "member" sees only
+//    properties/clients they created.
+//  - Rules that DBML cannot express (partial unique index, EXCLUDE, CHECKs, lower(email)
+//    unique index) live in prisma/migrations/*_manual_constraints/migration.sql.
+//  - Derived values are NOT stored: property status, IRR, Cap Rate, NOI, yield,
+//    effective rent, financing installment and balance, area unit, transaction type.
+// ═══════════════════════════════════════════════════════════════════════════
+
+Project mybricks {
+  database_type: 'PostgreSQL'
+  Note: 'MyBricks v3 — real-estate portfolio management. Auth by Better Auth (organization + admin + anonymous plugins).'
+}
+
+// ───────────────────────────── ENUMS ─────────────────────────────────────
+
+enum invitation_status {
+  pending
+  accepted
+  rejected
+  canceled
+}
+
+enum person_type {
+  individual // CPF
+  company    // CNPJ
+}
+
+enum property_type {
+  residential
+  commercial
+  land
+  logistics
+  rural
+  parking
+}
+
+enum usage_type {
+  rental
+  short_stay
+  agricultural_lease
+  concession
+  own_use
+  loan_for_use
+}
+
+enum conservation_state {
+  degraded
+  poor
+  regular
+  good
+  excellent
+}
+
+enum rental_mode {
+  manual   // rent typed on the property (property_manual_rentals)
+  contract // rent derived from the active contract
+}
+
+enum acquisition_type {
+  purchase // with or without financing (see property_financings)
+  construction
+  inheritance
+  other
+}
+
+enum amortization_system {
+  sac
+  price
+}
+
+enum registration_status {
+  regular
+  irregular
+}
+
+enum proposal_type {
+  purchase
+  sale
+  rental
+  linked
+  informal
+}
+
+enum contract_type {
+  conventional
+  short_stay
+}
+
+enum contract_status {
+  active
+  ended
+  cancelled
+}
+
+enum adjustment_index {
+  igpm
+  ipca
+  inpc
+  igpdi
+  other
+}
+
+enum reservation_status {
+  confirmed
+  cancelled
+}
+
+enum transaction_type {
+  revenue
+  expense
+}
+
+enum feedback_status {
+  open
+  resolved
+}
+
+enum audit_action {
+  login
+  logout
+  create
+  update
+  delete
+  view
+  upload
+  end_contract
+  cancel
+  generate_pdf
+  generate_report
+  invite_member
+  remove_member
+  impersonate_start
+  impersonate_end
+  unauthorized_access
+}
+
+enum audit_entity_type {
+  property
+  client
+  transaction
+  document
+  photo
+  contract
+  reservation
+  occupant
+  member
+  organization
+  report
+  feedback
+}
+
+// ───────────────────────────── AUTH (Better Auth) ────────────────────────
+// Run `npx auth@latest generate` and diff with these tables before the first migration.
+
+Table users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(255) [not null]
+  email varchar(320) [not null, unique]
+  email_verified boolean [not null, default: false]
+  image text
+  is_anonymous boolean [not null, default: false, note: 'Guest sessions (anonymous plugin)']
+  role varchar(100) [not null, default: 'user', note: 'Admin plugin. Plugin may store several roles comma-separated, so NOT an enum']
+  banned boolean [not null, default: false]
+  ban_reason text
+  ban_expires_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table sessions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  token varchar(255) [not null, unique]
+  expires_at timestamptz [not null]
+  ip_address varchar(45)
+  user_agent text
+  user_id uuid [not null]
+  active_organization_id uuid [note: 'Organization plugin']
+  impersonated_by_id uuid [note: 'Admin plugin: platform admin impersonating this session']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    user_id
+    expires_at
+    active_organization_id
+    impersonated_by_id
+  }
+}
+
+Table accounts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  account_id varchar(255) [not null, note: 'Id of the account at the provider']
+  provider_id varchar(100) [not null, note: 'credential | google']
+  user_id uuid [not null]
+  access_token text
+  refresh_token text
+  id_token text
+  access_token_expires_at timestamptz
+  refresh_token_expires_at timestamptz
+  scope text
+  password text [note: 'Hash, only for provider_id = credential']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (provider_id, account_id) [unique]
+    user_id
+  }
+}
+
+Table verifications {
+  id uuid [pk, default: `gen_random_uuid()`]
+  identifier varchar(320) [not null]
+  value text [not null]
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    identifier
+  }
+}
+
+// ───────────────────────────── TENANCY ───────────────────────────────────
+
+Table organizations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(255) [not null]
+  slug varchar(100) [not null, unique]
+  logo text
+  is_demo boolean [not null, default: false, note: 'Guest/demo workspace']
+  demo_expires_at timestamptz [note: 'Cleanup job deletes expired demo organizations (TTL 24h). Job must delete storage objects first']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (is_demo, demo_expires_at)
+  }
+}
+
+Table members {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  user_id uuid [not null]
+  role varchar(100) [not null, default: 'member', note: 'Organization plugin: owner | admin | member. Plugin may store several roles comma-separated, so NOT an enum']
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'A member that still owns clients/properties/files cannot be removed: reassign first.'
+
+  indexes {
+    (organization_id, user_id) [unique, note: 'Target of composite FKs (authorship)']
+    user_id
+  }
+}
+
+Table invitations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  email varchar(320) [not null]
+  role varchar(100) [not null, default: 'member']
+  status invitation_status [not null, default: 'pending']
+  expires_at timestamptz [not null]
+  inviter_id uuid [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (organization_id, email)
+    inviter_id
+  }
+}
+
+// ───────────────────────────── CLIENTS & PARTIES ─────────────────────────
+
+Table clients {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  created_by_id uuid [not null]
+  name varchar(255) [not null]
+  person_type person_type [not null, default: 'individual']
+  document varchar(20) [note: 'CPF or CNPJ (digits only)']
+  email varchar(320)
+  whatsapp varchar(30)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, organization_id) [unique, note: 'Target of composite FKs']
+    (organization_id, document) [unique, note: 'NULL documents allowed']
+    (organization_id, created_by_id)
+  }
+}
+
+Table occupants {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  name varchar(255) [not null]
+  document varchar(20)
+  email varchar(320)
+  phone varchar(30)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'Person who occupies a property: tenant of a conventional contract or guest of a short-stay reservation.'
+
+  indexes {
+    (id, organization_id) [unique]
+    (organization_id, document) [unique, note: 'NULL documents allowed']
+  }
+}
+
+Table agencies {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  name varchar(255) [not null]
+
+  Note: 'Real-estate agencies that manage properties.'
+
+  indexes {
+    (id, organization_id) [unique]
+    (organization_id, name) [unique]
+  }
+}
+
+// ───────────────────────────── LOOKUPS ───────────────────────────────────
+
+Table cities {
+  ibge_code int [pk, note: '7-digit IBGE municipality code']
+  name varchar(150) [not null]
+  state char(2) [not null]
+
+  Note: 'Seeded with the ~5,570 Brazilian municipalities. City determines state (3NF).'
+
+  indexes {
+    (state, name) [unique]
+  }
+}
+
+Table property_subtypes {
+  id int [pk, increment]
+  property_type property_type [not null]
+  name varchar(100) [not null]
+
+  Note: 'Seeded lookup: Apartment, House, Penthouse, Office, Store, Warehouse, Farm...'
+
+  indexes {
+    (property_type, name) [unique]
+    (id, property_type) [unique, note: 'Target of composite FK: a subtype always matches the property type']
+  }
+}
+
+Table property_type_usages {
+  property_type property_type [not null]
+  usage_type usage_type [not null]
+
+  Note: 'Seeded rule table. residential: rental, short_stay, own_use, loan_for_use | commercial: rental, concession, own_use | land: agricultural_lease, own_use, loan_for_use | logistics: rental, concession | rural: agricultural_lease, own_use, loan_for_use, rental | parking: rental, own_use, loan_for_use.'
+
+  indexes {
+    (property_type, usage_type) [pk]
+  }
+}
+
+// ───────────────────────────── PROPERTIES ────────────────────────────────
+
+Table properties {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  created_by_id uuid [not null]
+  client_id uuid [note: 'Optional owner/client of the property']
+  agency_id uuid [note: 'Optional managing agency']
+  name varchar(255) [not null]
+  property_type property_type [not null]
+  subtype_id int
+  usage_type usage_type [not null, note: 'Must be allowed for property_type (property_type_usages)']
+  ownership_percentage decimal(5,2) [not null, default: 100, note: 'CHECK > 0 AND <= 100']
+  total_area decimal(12,2) [note: 'm2 (hectares when property_type = rural)']
+  private_area decimal(12,2) [note: 'm2, used for price per m2']
+  bedrooms smallint
+  suites smallint
+  bathrooms smallint
+  parking_spaces smallint
+  parking_spot_label varchar(50) [note: 'Only for property_type = parking']
+  built_year smallint
+  conservation_state conservation_state
+  estimated_value_cents bigint [note: 'Typed manually; NULL = not appraised yet']
+  annual_expenses_cents bigint [not null, default: 0, note: 'Condo, property tax, administration, insurance...']
+  occupancy_rate decimal(5,2) [not null, default: 90, note: 'Expected occupancy, 0-100']
+  rental_mode rental_mode [not null, default: 'manual']
+  notes text
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, organization_id) [unique, note: 'Target of composite FKs']
+    (organization_id, created_by_id)
+    (organization_id, client_id)
+    (organization_id, agency_id)
+    (organization_id, property_type)
+    subtype_id
+  }
+}
+
+Table property_manual_rentals {
+  property_id uuid [pk]
+  tenant_name varchar(255)
+  monthly_rent_cents bigint [not null, default: 0]
+  due_day smallint [note: '1-31']
+
+  Note: 'Typed rent data, used while properties.rental_mode = manual. Kept when the mode is switched so values are not lost.'
+}
+
+Table property_addresses {
+  property_id uuid [pk]
+  city_id int [not null]
+  postal_code varchar(9)
+  street varchar(255) [not null]
+  number varchar(20)
+  complement varchar(100)
+  neighborhood varchar(100)
+  latitude decimal(10,7) [note: 'NULL until geocoded']
+  longitude decimal(10,7)
+
+  indexes {
+    city_id
+  }
+}
+
+Table property_acquisitions {
+  property_id uuid [pk]
+  acquisition_type acquisition_type [not null]
+  acquired_on date [note: 'Purchase date, or base date for inheritance (IRR period start)']
+  cost_cents bigint [note: 'Purchase price, or base cost for inheritance. NULL = IRR not available']
+
+  Note: 'One optional row per property. Cost and date feed the IRR calculation.'
+
+  indexes {
+    (property_id, acquisition_type) [unique, note: 'Target of composite FK from property_financings']
+  }
+}
+
+Table property_financings {
+  property_id uuid [pk]
+  acquisition_type acquisition_type [not null, note: 'Mirror of the acquisition type, kept in sync by the composite FK. CHECK IN (purchase, construction): no financing for inheritance/other']
+  lender varchar(255)
+  financed_amount_cents bigint [not null]
+  term_months smallint [not null]
+  annual_interest_rate decimal(7,4) [not null]
+  amortization_system amortization_system [not null]
+  first_installment_on date [not null]
+
+  Note: 'Optional fact of a purchase or construction. Installment amount and outstanding balance are DERIVED from these columns. Changing the acquisition type to inheritance/other is blocked while a financing exists.'
+
+  indexes {
+    (property_id, acquisition_type) [unique, note: 'Required by Prisma for a one-to-one composite relation (redundant with the PK)']
+  }
+}
+
+Table property_legal_records {
+  property_id uuid [pk]
+  registration_status registration_status [not null, default: 'regular']
+  irregularity_description text [note: 'Only when irregular (CHECK)']
+  registry_number varchar(50) [note: 'Matrícula']
+  registry_office varchar(255) [note: 'Cartório / CRI']
+  notes text
+}
+
+Table property_insurances {
+  property_id uuid [pk]
+  description text
+
+  Note: 'A row exists only when the property is insured.'
+}
+
+Table property_proposals {
+  id uuid [pk, default: `gen_random_uuid()`]
+  property_id uuid [not null]
+  proposal_type proposal_type [not null]
+  amount_cents bigint [not null]
+  proposal_date date [not null]
+  contact varchar(255)
+  notes text
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (property_id, proposal_date)
+  }
+}
+
+// ───────────────────────────── FILES ─────────────────────────────────────
+
+Table stored_files {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  uploaded_by_id uuid [not null]
+  storage_key varchar(500) [not null, unique, note: 'Object key in S3-compatible storage (MinIO)']
+  file_name varchar(255) [not null]
+  mime_type varchar(100) [not null]
+  size_bytes bigint [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (id, organization_id) [unique, note: 'Target of composite FKs']
+    (organization_id, uploaded_by_id)
+    created_at [note: 'Orphan sweep: files older than 1h referenced by no photo/document/contract/feedback']
+  }
+}
+
+Table property_photos {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  property_id uuid [not null]
+  file_id uuid [not null]
+  position smallint [not null, default: 0]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (property_id, file_id) [unique]
+    (property_id, position)
+    (file_id, organization_id)
+  }
+}
+
+Table property_documents {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  property_id uuid [not null]
+  file_id uuid [not null, unique]
+  category varchar(50) [note: 'Free label: deed, registry, tax, insurance...']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    property_id
+  }
+}
+
+// ───────────────────────────── CONTRACTS & RESERVATIONS ──────────────────
+
+Table contracts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  property_id uuid [not null]
+  occupant_id uuid [not null]
+  contract_type contract_type [not null]
+  status contract_status [not null, default: 'active']
+  start_date date [not null]
+  end_date date [note: 'NULL = open-ended. CHECK end_date > start_date']
+  notes text
+  pdf_file_id uuid [note: 'Generated contract PDF']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'Rule: at most ONE active contract per property -> partial unique index on (property_id) WHERE status = active (raw SQL migration). Creating a new contract ends the active one. History is never deleted: only property deletion cascades. Conventional contracts must have a contract_rent_terms row (service rule).'
+
+  indexes {
+    (id, organization_id) [unique]
+    (id, property_id) [unique, note: 'Target of composite FK from reservations']
+    (id, contract_type) [unique, note: 'Target of composite FK from contract_rent_terms']
+    (property_id, status)
+    (organization_id, status)
+    (occupant_id, organization_id)
+    (pdf_file_id, organization_id)
+  }
+}
+
+Table contract_rent_terms {
+  contract_id uuid [pk]
+  contract_type contract_type [not null, note: 'CHECK = conventional: only conventional contracts have rent terms']
+  monthly_rent_cents bigint [not null]
+  due_day smallint [not null, note: '1-31']
+  adjustment_index adjustment_index
+
+  Note: 'Rent terms exist only for conventional contracts. Short-stay revenue comes from reservations.'
+
+  indexes {
+    (contract_id, contract_type) [unique, note: 'Required by Prisma for a one-to-one composite relation (redundant with the PK)']
+  }
+}
+
+Table reservations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  property_id uuid [not null]
+  contract_id uuid [note: 'Optional short_stay contract of the SAME property (type validated in service)']
+  occupant_id uuid [not null, note: 'Guest']
+  check_in date [not null]
+  check_out date [not null, note: 'CHECK check_out > check_in. Half-open range [check_in, check_out)']
+  total_amount_cents bigint [not null, default: 0]
+  status reservation_status [not null, default: 'confirmed']
+  notes text
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'No overlap between confirmed reservations of the same property: EXCLUDE USING gist (property_id WITH =, daterange(check_in, check_out) WITH &&) WHERE status = confirmed (raw SQL migration, needs btree_gist).'
+
+  indexes {
+    (property_id, check_in)
+    (organization_id, check_in)
+    (contract_id, property_id)
+    (occupant_id, organization_id)
+  }
+}
+
+// ───────────────────────────── FINANCE ───────────────────────────────────
+
+Table transaction_categories {
+  id int [pk, increment]
+  transaction_type transaction_type [not null]
+  name varchar(100) [not null]
+
+  Note: 'Seeded. Revenue: property sale, insurance reimbursement, termination fee, indemnity, other. Expense: financing installment, renovation, construction, contractual fine, fees, capital-gain tax, other.'
+
+  indexes {
+    (transaction_type, name) [unique]
+  }
+}
+
+Table transactions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  property_id uuid [not null]
+  category_id int [not null, note: 'Category defines revenue vs expense']
+  amount_cents bigint [not null, note: 'Always positive. CHECK > 0']
+  occurred_on date [not null]
+  description varchar(500)
+  is_recurring boolean [not null, default: false, note: 'Monthly, from occurred_on until recurrence_ends_on']
+  recurrence_ends_on date [note: 'NULL = still running. CHECK (recurrence_ends_on IS NULL OR (is_recurring AND recurrence_ends_on >= occurred_on))']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'Only non-operational items. Rent, condo and property tax live on the property / contract.'
+
+  indexes {
+    (property_id, occurred_on)
+    (organization_id, occurred_on)
+    category_id
+  }
+}
+
+// ───────────────────────────── SETTINGS, FEEDBACK, AUDIT ─────────────────
+
+Table contract_templates {
+  organization_id uuid [pk]
+  header text [not null]
+  clauses text [not null, note: 'Sanitized HTML']
+  footer text [not null]
+  updated_by_id uuid
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'One contract PDF template per organization. Rent-charge template and auto-send settings arrive with the rent-charge module.'
+}
+
+Table feedbacks {
+  id uuid [pk, default: `gen_random_uuid()`]
+  organization_id uuid [not null]
+  user_id uuid [not null]
+  message text [not null]
+  attachment_file_id uuid
+  status feedback_status [not null, default: 'open']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (status, created_at)
+    user_id
+    (attachment_file_id, organization_id)
+  }
+}
+
+Table audit_logs {
+  id bigint [pk, increment]
+  organization_id uuid [note: 'NULL = platform-level event. Logs of a deleted organization are deleted with it']
+  actor_user_id uuid
+  actor_name varchar(255) [note: 'Snapshot at the time of the action (immutable trail)']
+  actor_email varchar(320) [note: 'Snapshot']
+  actor_role varchar(100) [note: 'Snapshot of the member role']
+  impersonated_by_id uuid [note: 'Set when a platform admin acted via impersonation']
+  action audit_action [not null]
+  entity_type audit_entity_type
+  entity_id uuid [note: 'Polymorphic reference, intentionally without FK']
+  details text
+  ip_address varchar(45)
+  user_agent varchar(500)
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'Retention 12 months. Actor columns are deliberate snapshots, not redundancy.'
+
+  indexes {
+    (organization_id, created_at)
+    (actor_user_id, created_at)
+    action
+    impersonated_by_id
+  }
+}
+
+// ───────────────────────────── RELATIONSHIPS ─────────────────────────────
+
+// Auth
+Ref: sessions.user_id > users.id [delete: cascade]
+Ref: sessions.active_organization_id > organizations.id [delete: set null]
+Ref: sessions.impersonated_by_id > users.id [delete: set null]
+Ref: accounts.user_id > users.id [delete: cascade]
+
+// Tenancy
+Ref: members.organization_id > organizations.id [delete: cascade]
+Ref: members.user_id > users.id [delete: cascade]
+Ref: invitations.organization_id > organizations.id [delete: cascade]
+Ref: invitations.inviter_id > users.id [delete: cascade]
+
+// Clients, occupants, agencies
+Ref: clients.organization_id > organizations.id [delete: cascade]
+Ref: clients.(organization_id, created_by_id) > members.(organization_id, user_id) [delete: no action]
+Ref: occupants.organization_id > organizations.id [delete: cascade]
+Ref: agencies.organization_id > organizations.id [delete: cascade]
+
+// Properties
+Ref: properties.organization_id > organizations.id [delete: cascade]
+Ref: properties.(organization_id, created_by_id) > members.(organization_id, user_id) [delete: no action]
+Ref: properties.(client_id, organization_id) > clients.(id, organization_id) [delete: no action]
+Ref: properties.(agency_id, organization_id) > agencies.(id, organization_id) [delete: no action]
+Ref: properties.(subtype_id, property_type) > property_subtypes.(id, property_type) [delete: restrict]
+Ref: properties.(property_type, usage_type) > property_type_usages.(property_type, usage_type) [delete: restrict]
+
+Ref: property_manual_rentals.property_id > properties.id [delete: cascade]
+Ref: property_addresses.property_id > properties.id [delete: cascade]
+Ref: property_addresses.city_id > cities.ibge_code [delete: restrict]
+Ref: property_acquisitions.property_id > properties.id [delete: cascade]
+Ref: property_financings.(property_id, acquisition_type) > property_acquisitions.(property_id, acquisition_type) [delete: cascade, update: cascade]
+Ref: property_legal_records.property_id > properties.id [delete: cascade]
+Ref: property_insurances.property_id > properties.id [delete: cascade]
+Ref: property_proposals.property_id > properties.id [delete: cascade]
+
+// Files (same-organization guaranteed on both sides)
+Ref: stored_files.organization_id > organizations.id [delete: cascade]
+Ref: stored_files.(organization_id, uploaded_by_id) > members.(organization_id, user_id) [delete: no action]
+Ref: property_photos.(property_id, organization_id) > properties.(id, organization_id) [delete: cascade]
+Ref: property_photos.(file_id, organization_id) > stored_files.(id, organization_id) [delete: no action]
+Ref: property_documents.(property_id, organization_id) > properties.(id, organization_id) [delete: cascade]
+Ref: property_documents.(file_id, organization_id) > stored_files.(id, organization_id) [delete: no action]
+
+// Contracts & reservations
+Ref: contracts.(property_id, organization_id) > properties.(id, organization_id) [delete: cascade]
+Ref: contracts.(occupant_id, organization_id) > occupants.(id, organization_id) [delete: no action]
+Ref: contracts.(pdf_file_id, organization_id) > stored_files.(id, organization_id) [delete: no action]
+Ref: contract_rent_terms.(contract_id, contract_type) > contracts.(id, contract_type) [delete: cascade]
+
+Ref: reservations.(property_id, organization_id) > properties.(id, organization_id) [delete: cascade]
+Ref: reservations.(occupant_id, organization_id) > occupants.(id, organization_id) [delete: no action]
+Ref: reservations.(contract_id, property_id) > contracts.(id, property_id) [delete: no action]
+
+// Finance
+Ref: transactions.(property_id, organization_id) > properties.(id, organization_id) [delete: cascade]
+Ref: transactions.category_id > transaction_categories.id [delete: restrict]
+
+// Settings, feedback, audit
+Ref: contract_templates.organization_id > organizations.id [delete: cascade]
+Ref: contract_templates.updated_by_id > users.id [delete: set null]
+Ref: feedbacks.organization_id > organizations.id [delete: cascade]
+Ref: feedbacks.user_id > users.id [delete: cascade]
+Ref: feedbacks.(attachment_file_id, organization_id) > stored_files.(id, organization_id) [delete: no action]
+Ref: audit_logs.organization_id > organizations.id [delete: cascade]
+Ref: audit_logs.actor_user_id > users.id [delete: set null]
+Ref: audit_logs.impersonated_by_id > users.id [delete: set null]
+
+// ───────────────────────────── GROUPS ────────────────────────────────────
+
+TableGroup auth {
+  users
+  sessions
+  accounts
+  verifications
+}
+
+TableGroup tenancy {
+  organizations
+  members
+  invitations
+}
+
+TableGroup parties {
+  clients
+  occupants
+  agencies
+}
+
+TableGroup lookups {
+  cities
+  property_subtypes
+  property_type_usages
+  transaction_categories
+}
+
+TableGroup properties_group {
+  properties
+  property_manual_rentals
+  property_addresses
+  property_acquisitions
+  property_financings
+  property_legal_records
+  property_insurances
+  property_proposals
+  property_photos
+  property_documents
+  stored_files
+}
+
+TableGroup leasing {
+  contracts
+  contract_rent_terms
+  reservations
+}
+
+TableGroup finance {
+  transactions
+}
+
+TableGroup platform {
+  contract_templates
+  feedbacks
+  audit_logs
+}
