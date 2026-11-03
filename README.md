@@ -142,6 +142,17 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 - `GET /api/properties/:id/financing-schedule?asOf=` returns the SAC or Price schedule (installment, interest, amortization and balance per month, due on the same day of each month, clamped to short months) and where the financing stands on `asOf`: paid and remaining installments, outstanding balance, total paid, total interest and the next installment. The nominal annual rate (percent) is split evenly into a monthly rate; rounding is per row and the last amortization absorbs the difference.
 - Not covered yet: geocoding (latitude and longitude stay empty).
 
+### Guest workspace and maintenance
+
+- **A guest gets a workspace worth exploring.** Signing in as a guest creates a demo organization that expires after `DEMO_TTL_HOURS` and fills it with a made-up portfolio built around *today*: 9 properties (apartments, a short-stay flat, a commercial room, a logistics warehouse, a plot, a beach house, a parking spot, a vacant apartment), 3 clients, an agency, 4 contracts (one ended, one about to end), 8 reservations (one coming up, one cancelled), expenses and a revenue, proposals, a financing with its schedule and an irregular registry. The indicators come out plausible (portfolio cap rate in the single digits, IRR where there is an acquisition). The guest can change everything, generate a contract PDF and upload files on top of it. If the sample cannot be written (for instance the reference data was never seeded) the guest still gets a working, empty workspace. If the guest signs up for real, the workspace is kept with all its data.
+- **Housekeeping.** `npm run maintenance` runs it once (cron-friendly); the server also runs it at start and every `MAINTENANCE_INTERVAL_MINUTES` (default 60, `0` turns it off), never overlapping with itself. Each run:
+  1. deletes **expired demo organizations** with everything in them. The objects in the storage go first, then the rows in the order Postgres needs (feedback, properties and what hangs from them, stored files, clients, occupants, agencies, the organization). If an object cannot be deleted the organization is kept and retried on the next run, instead of orphaning the file. The guest accounts that owned them are removed too, unless the guest still belongs to another organization;
+  2. sweeps **orphan files** older than an hour;
+  3. purges **audit entries** older than 12 months;
+  4. purges **expired sessions and verification tokens**.
+  It returns a report with the counts. Real (non-demo) organizations are never candidates.
+- **Composition root.** `src/container.ts` wires the app by hand; the server, the scripts and the tests all build it from there.
+
 ### Feedback — `/api/feedback`
 
 Any signed-in user (guests included) can `POST /` a message (3 to 5000 characters) and `GET /` what they sent (`status`, `page`, `pageSize`). An attachment is not supported yet.
@@ -156,6 +167,8 @@ The owner panel. It needs the `admin` platform role (`users.role`, set in the da
 | `PATCH` | `/api/admin/feedback/:id` | `{ "status": "open" \| "resolved" }` |
 | `GET` | `/api/admin/audit-logs` | the whole audit trail, optionally narrowed with `organizationId` |
 | — | `/api/auth/admin/*` | Better Auth's admin plugin: list/ban users, `impersonate-user`, `stop-impersonating` |
+
+**Creating the operator.** `ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' npm run admin:create` (optional `ADMIN_NAME`). Idempotent: it creates the account if it does not exist (through Better Auth, so the password is hashed the way sign-in expects), promotes it if it exists without the role, and does nothing if it is already an admin. An existing account keeps its password and data. The password is read from the environment so it never lands in the shell history, and it is never printed.
 
 **Impersonation** ("see as"): the session becomes the target user's and `/api/me` reports `impersonatedById`. The admin can read and edit as that user, but **every `DELETE` answers `403`** until `stop-impersonating`, and everything done in the meantime is audited with the impersonator.
 
@@ -282,6 +295,8 @@ npm run test:watch  # re-run on change
 | `npm run build` / `npm start` | compile and run |
 | `npm run typecheck` | TypeScript check |
 | `npm test` / `test:watch` | Vitest suite (see Tests) |
+| `npm run admin:create` | create or promote the platform operator (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) |
+| `npm run maintenance` | one housekeeping run (expired demos, orphan files, audit retention, stale sessions) |
 | `npm run db:up` / `db:down` | start / stop local PostgreSQL |
 | `npm run db:migrate` | create/apply migrations (dev) |
 | `npm run db:seed` | seed reference data: 5,571 IBGE municipalities, property subtypes, allowed usages per property type, transaction categories |
