@@ -26,6 +26,8 @@ const envSchema = z
       .enum(["true", "false"])
       .default("true")
       .transform((value) => value === "true"),
+    /** How often the housekeeping runs inside the server, in minutes. 0 turns it off (use `npm run maintenance`). */
+    MAINTENANCE_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(60),
     /** Largest accepted upload, in megabytes. */
     MAX_UPLOAD_MB: z.coerce.number().positive().max(100).default(15),
   })
