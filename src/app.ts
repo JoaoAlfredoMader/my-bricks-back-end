@@ -13,6 +13,7 @@ import { createAuthRoutes } from "./modules/auth/auth.route.js";
 import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
 import { createContractsRoutes } from "./modules/contracts/contracts.route.js";
+import { createDocumentsRoutes } from "./modules/documents/documents.route.js";
 import { createAdminFeedbackRoutes, createFeedbackRoutes } from "./modules/feedback/feedback.route.js";
 import { createHealthRoutes } from "./modules/health/health.route.js";
 import { createKpisRoutes } from "./modules/kpis/kpis.route.js";
@@ -67,6 +68,7 @@ export function createApp({ prisma, env, auth, provisioning, audit, storage }: A
   app.route("/api/kpis", createKpisRoutes(prisma));
   app.route("/api/lookups", createLookupsRoutes(prisma));
   app.route("/api/properties", createPropertiesRoutes(prisma));
+  app.route("/api/properties/:propertyId/documents", createDocumentsRoutes(prisma, storage, maxUploadBytes));
   app.route("/api/properties/:propertyId/photos", createPhotosRoutes(prisma, storage, maxUploadBytes));
   app.route("/api/properties/:propertyId/proposals", createProposalsRoutes(prisma));
   app.route("/api/occupants", createOccupantsRoutes(prisma));
