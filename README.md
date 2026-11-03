@@ -62,6 +62,25 @@ npm run dev            # http://localhost:3000/health
 - Better Auth runs with `advanced.database.generateId: false`: ids come from the database (`gen_random_uuid()`).
 - The cookie is sent cross-origin only to `FRONTEND_URL` (CORS with credentials + `trustedOrigins`). In production keep front and API under the same parent domain.
 
+## API conventions
+
+- **Tenant scope.** Routes call `tenantScope(c)`, which reads the organization and role from the session. Owners and admins see every record of the organization; members only the ones they created. A record outside the caller's scope answers `404`, never `403`, so ids of other tenants do not leak.
+- **Validation** happens in the route layer with Zod (`validate("json" | "query" | "param", schema)`). Failures answer `400` with `{ error: { code: "VALIDATION_ERROR", details: [{ path, message }] } }`.
+- **Errors** are typed `AppError`s turned into `{ error: { code, message, details? } }` by the app-level handler: `400` validation, `401` unauthenticated, `403` forbidden, `404` not found, `409` conflict, `422` business rule.
+- **Lists** are paginated: `?page=1&pageSize=20` (max 100) answering `{ items, page, pageSize, total }`.
+
+### Clients — `/api/clients`
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | `search` (name, document digits, e-mail), `personType`, `page`, `pageSize` |
+| `POST` | `/` | `name`, `personType` (`individual` default \| `company`), optional `document`, `email`, `whatsapp` |
+| `GET` | `/:id` | |
+| `PATCH` | `/:id` | any subset of the create fields; `null` clears an optional field |
+| `DELETE` | `/:id` | `409` while the client still has properties |
+
+`document` is a CPF for individuals and a CNPJ for companies, validated with check digits (alphanumeric CNPJ supported) and stored without punctuation. It is unique per organization. `whatsapp` is stored as digits only.
+
 ## Database
 
 The model is normalized (3NF) and documented in [`docs/database/mybricks-database.dbml`](docs/database/mybricks-database.dbml), which can be pasted into [dbdiagram.io](https://dbdiagram.io).
