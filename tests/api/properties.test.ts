@@ -198,6 +198,71 @@ describe("Properties API", () => {
     check("properties without acquisition expose null", k.acquisition === null);
   });
 
+  it("legal record, insurance and financing", async () => {
+    const financing = { lender: "Caixa", financedAmountCents: 40_000_000, termMonths: 360, annualInterestRate: 10.5, amortizationSystem: "sac", firstInstallmentOn: "2020-05-10" };
+    const full = await ana.session.call("POST", "/api/properties", {
+      name: "Financiado", propertyType: "residential", usageType: "rental",
+      acquisition: { acquisitionType: "purchase", acquiredOn: "2020-03-15", costCents: 60_000_000 },
+      financing,
+      legalRecord: { registrationStatus: "irregular", irregularityDescription: "Sem habite-se", registryNumber: "12.345", registryOffice: "1º CRI de Campinas", notes: "" },
+      insurance: { description: "Apólice 99 - Porto Seguro" },
+    });
+    check("create with financing, legal record and insurance -> 201", full.status === 201, full);
+    const financed = full.json;
+    check("financing exposed with money in cents and the rate in percent",
+      financed?.financing?.lender === "Caixa" && financed.financing.financedAmountCents === 40_000_000 && financed.financing.termMonths === 360 && financed.financing.annualInterestRate === 10.5 && financed.financing.amortizationSystem === "sac" && financed.financing.firstInstallmentOn === "2020-05-10", financed?.financing);
+    check("legal record exposed, blank notes become null", financed?.legalRecord?.registrationStatus === "irregular" && financed.legalRecord.irregularityDescription === "Sem habite-se" && financed.legalRecord.registryNumber === "12.345" && financed.legalRecord.notes === null, financed?.legalRecord);
+    check("insurance exposed", financed?.insurance?.description === "Apólice 99 - Porto Seguro", financed?.insurance);
+    check("the financing mirrors the acquisition type in the database", (await prisma.propertyFinancing.findUnique({ where: { propertyId: financed.id } }))?.acquisitionType === "purchase");
+
+    const base = { name: "Teste", propertyType: "residential", usageType: "rental" };
+    const bad = async (name: string, body: unknown, path: string) => {
+      const r = await ana.session.call("POST", "/api/properties", { ...base, ...(body as object) });
+      check(name, r.status === 400 && r.json?.error?.details?.some((d: any) => d.path === path), r);
+    };
+    await bad("financing without an acquisition -> 400", { financing }, "financing");
+    await bad("financing on an inheritance -> 400", { acquisition: { acquisitionType: "inheritance", acquiredOn: "2018-01-01" }, financing }, "financing");
+    await bad("irregularity description on a regular property -> 400", { legalRecord: { registrationStatus: "regular", irregularityDescription: "x" } }, "legalRecord.irregularityDescription");
+    const purchase = { acquisition: { acquisitionType: "purchase", acquiredOn: "2020-03-15" } };
+    await bad("zero financed amount -> 400", { ...purchase, financing: { ...financing, financedAmountCents: 0 } }, "financing.financedAmountCents");
+    await bad("zero term -> 400", { ...purchase, financing: { ...financing, termMonths: 0 } }, "financing.termMonths");
+    await bad("negative rate -> 400", { ...purchase, financing: { ...financing, annualInterestRate: -1 } }, "financing.annualInterestRate");
+    await bad("unknown amortization system -> 400", { ...purchase, financing: { ...financing, amortizationSystem: "bullet" } }, "financing.amortizationSystem");
+    await bad("impossible first installment date -> 400", { ...purchase, financing: { ...financing, firstInstallmentOn: "2020-02-30" } }, "financing.firstInstallmentOn");
+    check("failed creates left nothing behind", (await prisma.property.count({ where: { name: "Teste" } })) === 0);
+
+    const defaults = await ana.session.call("POST", "/api/properties", { ...base, name: "Registro padrão", legalRecord: {} });
+    check("a legal record defaults to regular", defaults.json?.legalRecord?.registrationStatus === "regular" && defaults.json.legalRecord.irregularityDescription === null, defaults);
+    const noExtras = await ana.session.call("POST", "/api/properties", { ...base, name: "Sem extras" });
+    check("properties without extras expose null", noExtras.json?.financing === null && noExtras.json.legalRecord === null && noExtras.json.insurance === null, noExtras.json);
+
+    const price = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { financing: { ...financing, amortizationSystem: "price", annualInterestRate: 9 } });
+    check("financing is replaced as a whole", price.json?.financing?.amortizationSystem === "price" && price.json.financing.annualInterestRate === 9, price);
+    const construction = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { acquisition: { acquisitionType: "construction", acquiredOn: "2020-03-15", costCents: 60_000_000 } });
+    check("switching purchase to construction keeps the financing", construction.status === 200 && construction.json.acquisition.acquisitionType === "construction" && construction.json.financing?.amortizationSystem === "price", construction);
+    check("the mirrored type followed in the database", (await prisma.propertyFinancing.findUnique({ where: { propertyId: financed.id } }))?.acquisitionType === "construction");
+    const toInheritance = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { acquisition: { acquisitionType: "inheritance", acquiredOn: "2018-01-10" } });
+    check("switching to inheritance while financed -> 400", toInheritance.status === 400 && toInheritance.json.error.details.some((d: any) => d.path === "financing"), toInheritance);
+    const dropAcquisition = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { acquisition: null });
+    check("removing the acquisition while financed -> 400", dropAcquisition.status === 400, dropAcquisition);
+    const unfinanced = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { financing: null });
+    check("financing can be removed", unfinanced.status === 200 && unfinanced.json.financing === null && unfinanced.json.acquisition !== null, unfinanced);
+    const inherited = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { acquisition: { acquisitionType: "inheritance", acquiredOn: "2018-01-10" } });
+    check("then the acquisition can become an inheritance", inherited.status === 200 && inherited.json.acquisition.acquisitionType === "inheritance", inherited);
+    const noAcqFinancing = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { financing });
+    check("adding a financing to an inheritance -> 400", noAcqFinancing.status === 400, noAcqFinancing);
+    const both = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { acquisition: { acquisitionType: "purchase", acquiredOn: "2021-01-01" }, financing });
+    check("acquisition and financing can change together", both.status === 200 && both.json.financing?.lender === "Caixa" && both.json.acquisition.acquisitionType === "purchase", both);
+
+    const regularized = await ana.session.call("PATCH", `/api/properties/${financed.id}`, { legalRecord: { registrationStatus: "regular", registryNumber: "12.345" } });
+    check("legal record is replaced as a whole (description cleared)", regularized.json?.legalRecord?.registrationStatus === "regular" && regularized.json.legalRecord.irregularityDescription === null && regularized.json.legalRecord.registryOffice === null, regularized.json?.legalRecord);
+    check("a legal record can be removed", (await ana.session.call("PATCH", `/api/properties/${financed.id}`, { legalRecord: null })).json?.legalRecord === null);
+    const insured = await ana.session.call("PATCH", `/api/properties/${noExtras.json.id}`, { insurance: { description: "" } });
+    check("an insurance without a description still means insured", insured.json?.insurance !== null && insured.json.insurance.description === null, insured.json);
+    check("insurance can be removed", (await ana.session.call("PATCH", `/api/properties/${noExtras.json.id}`, { insurance: null })).json?.insurance === null);
+    check("deleting the property removes the extras", (await ana.session.call("DELETE", `/api/properties/${financed.id}`)).status === 204 && (await prisma.propertyFinancing.count({ where: { propertyId: financed.id } })) + (await prisma.propertyLegalRecord.count({ where: { propertyId: financed.id } })) + (await prisma.propertyInsurance.count({ where: { propertyId: financed.id } })) === 0);
+  });
+
   it("members only see what they created", async () => {
     const biaProperty = await bia.session.call("POST", "/api/properties", { name: "Imóvel da Bia", propertyType: "residential", usageType: "rental" });
     check("member creates a property", biaProperty.status === 201 && biaProperty.json.createdById === bia.userId, biaProperty);
@@ -208,7 +273,7 @@ describe("Properties API", () => {
     check("member cannot delete it (404)", (await bia.session.call("DELETE", `/api/properties/${apto.id}`)).status === 404);
     const biaWithAnaClient = await bia.session.call("POST", "/api/properties", { name: "Teste Bia", propertyType: "residential", usageType: "rental", clientId: clientAna.id });
     check("member cannot attach a client she cannot see -> 400", biaWithAnaClient.status === 400, biaWithAnaClient);
-    check("owner sees everything", (await ana.session.call("GET", "/api/properties")).json?.total === 9);
+    check("owner sees everything", (await ana.session.call("GET", "/api/properties")).json?.total === (await prisma.property.count({ where: { organizationId: ana.organizationId } })));
   });
 
   it("tenant isolation", async () => {
