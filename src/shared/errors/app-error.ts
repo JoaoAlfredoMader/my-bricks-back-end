@@ -7,6 +7,8 @@ export type ErrorCode =
   | "NOT_FOUND"
   | "CONFLICT"
   | "BUSINESS_RULE_VIOLATION"
+  | "PAYLOAD_TOO_LARGE"
+  | "UNSUPPORTED_MEDIA_TYPE"
   | "INTERNAL_ERROR";
 
 /**
@@ -25,6 +27,14 @@ export class AppError extends Error {
 
   static validation(details: unknown, message = "Invalid request"): AppError {
     return new AppError("VALIDATION_ERROR", message, 400, details);
+  }
+
+  static payloadTooLarge(maxBytes: number): AppError {
+    return new AppError("PAYLOAD_TOO_LARGE", "The file is too large", 413, { maxBytes });
+  }
+
+  static unsupportedMediaType(message: string, details?: unknown): AppError {
+    return new AppError("UNSUPPORTED_MEDIA_TYPE", message, 415, details);
   }
 
   static unauthenticated(message = "Authentication required"): AppError {
