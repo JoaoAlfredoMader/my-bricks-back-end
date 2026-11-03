@@ -91,6 +91,23 @@ Read-only reference data for the forms (shared by every organization).
 | `GET` | `/transaction-categories` | revenue and expense categories |
 | `GET` | `/property-catalog` | for each property type: its subtypes and the usages allowed for it |
 
+### KPIs — `/api/kpis`
+
+Read-only indicators, calculated on every request from the stored data (nothing is persisted). Both endpoints take `asOf` (`YYYY-MM-DD`, default today).
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/portfolio` | totals, counts by status and one row per property; optional `clientId` |
+| `GET` | `/properties/:id` | the same indicators for one property |
+
+Yields, cap rate and IRR are fractions (`0.07` = 7%); money is integer cents.
+
+- **Revenue.** Manual mode: the rent typed on the property. Contract mode: the rent of the active conventional contract; for `short_stay` properties, the monthly average of the confirmed bookings whose check-in is in the last 12 months. `revenueSource` says which one applied. The expected occupancy rate applies to rents (expected income) but not to bookings (income already realized).
+- **NOI** = annual revenue − annual expenses. **Gross yield** = revenue / estimated value. **Cap rate** = NOI / estimated value. Both are `null` without an estimated value.
+- **Own use and loan for use** produce no income: they have no revenue or yields and stay out of the portfolio income, but their expenses are still reported and their value counts in the total patrimony.
+- **Portfolio** totals are weighted by the ownership share. Yield and cap rate only use properties that have a value, on both sides of the division, so a property without a value cannot skew them.
+- **IRR** is built from the monthly cash flow from the acquisition month to the `asOf` month: the acquisition cost goes out at month 0, each following month brings the operating result (current revenue − expenses, held constant), transactions land in the month they occur (recurring ones in every month until they end) and the estimated value comes back at the end. The monthly rate is found by bisection and annualized `(1 + r)^12 − 1`. It is `null` with a reason (`no_acquisition_date`, `no_acquisition_cost`, `no_estimated_value`, `period_too_short`, `no_solution`) when it cannot be computed. The acquisition (date and cost) is set on the property.
+
 ### Transactions — `/api/transactions`
 
 One-off or monthly-recurring revenues and expenses of a property that are not rent (sale, renovation, financing installment, fees...). Rent comes from the contracts and reservations.
@@ -119,7 +136,8 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 - Money fields (`*Cents`) are integer cents; percentages and areas are plain numbers.
 - `status` is derived on every read: `own_use` and `loan_for_use` follow the usage; otherwise `rented` when there is a tenant or rent (manual mode) or an active contract (contract mode), else `vacant`.
 - Cross-field rules are checked against the state after the write: the usage must be allowed for the property type, the subtype must belong to it, only parking properties have a spot label, and manual rental data is only accepted in manual mode. The client must exist in the organization and be visible to the caller.
-- Not covered yet: acquisition, financing, legal record, insurance, proposals, photos and documents (the last two wait for the object storage choice), agencies, geocoding.
+- `acquisition` (`acquisitionType`, `acquiredOn`, `costCents`) is replaced as a whole like `address`; an inheritance needs a base date. It feeds the IRR (see KPIs).
+- Not covered yet: financing, legal record, insurance, proposals, photos and documents (the last two wait for the object storage choice), agencies, geocoding.
 
 ### Contracts — `/api/contracts`
 
