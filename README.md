@@ -137,7 +137,18 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 - `status` is derived on every read: `own_use` and `loan_for_use` follow the usage; otherwise `rented` when there is a tenant or rent (manual mode) or an active contract (contract mode), else `vacant`.
 - Cross-field rules are checked against the state after the write: the usage must be allowed for the property type, the subtype must belong to it, only parking properties have a spot label, and manual rental data is only accepted in manual mode. The client must exist in the organization and be visible to the caller.
 - `acquisition` (`acquisitionType`, `acquiredOn`, `costCents`) is replaced as a whole like `address`; an inheritance needs a base date. It feeds the IRR (see KPIs).
-- Not covered yet: financing, legal record, insurance, proposals, photos and documents (the last two wait for the object storage choice), agencies, geocoding.
+- `legalRecord` (registration status, registry number/office, irregularity description only when irregular), `insurance` (a row means insured) and `financing` are nested the same way. A financing needs an acquisition by purchase or construction: sending one without it, or moving the acquisition to inheritance or removing it while financed, is a `400`.
+- `agencyId` links the property to the agency that manages it (`/api/agencies`).
+- `GET /api/properties/:id/financing-schedule?asOf=` returns the SAC or Price schedule (installment, interest, amortization and balance per month, due on the same day of each month, clamped to short months) and where the financing stands on `asOf`: paid and remaining installments, outstanding balance, total paid, total interest and the next installment. The nominal annual rate (percent) is split evenly into a monthly rate; rounding is per row and the last amortization absorbs the difference.
+- Not covered yet: photos and documents (they wait for the object storage), geocoding.
+
+### Agencies — `/api/agencies`
+
+The agencies that manage the organization's properties; shared by every member. `GET /` (`search`, `page`, `pageSize`), `POST /`, `GET /:id`, `PATCH /:id`, `DELETE /:id` (`409` while any property still uses it). The name is unique per organization.
+
+### Proposals — `/api/properties/:propertyId/proposals`
+
+Offers received or made on a property (`purchase`, `sale`, `rental`, `linked`, `informal`) with an amount in cents, a date, who made it and notes. `GET /` (`proposalType`, `page`, `pageSize`; latest date first), `POST /`, `GET /:id`, `PATCH /:id`, `DELETE /:id`. An unknown or invisible property is a `404`, not an empty list.
 
 ### Contracts — `/api/contracts`
 
