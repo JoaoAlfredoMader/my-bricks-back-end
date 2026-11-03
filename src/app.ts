@@ -6,6 +6,8 @@ import type { Env } from "./config/env.js";
 import type { PrismaClient } from "./lib/prisma.js";
 import type { Auth } from "./modules/auth/auth.js";
 import { createAgenciesRoutes } from "./modules/agencies/agencies.route.js";
+import type { AuditRecorder } from "./modules/audit/audit.recorder.js";
+import { createAdminAuditRoutes, createAuditRoutes } from "./modules/audit/audit.route.js";
 import { createAuthRoutes } from "./modules/auth/auth.route.js";
 import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
@@ -29,9 +31,10 @@ export interface AppDependencies {
   env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV">>;
   auth: Auth;
   provisioning: ProvisioningService;
+  audit: AuditRecorder;
 }
 
-export function createApp({ prisma, env, auth, provisioning }: AppDependencies) {
+export function createApp({ prisma, env, auth, provisioning, audit }: AppDependencies) {
   const app = new Hono<AppEnv>();
 
   // Request logs would drown the test output.
@@ -44,8 +47,14 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/auth", createAuthRoutes(auth));
   app.use("/api/*", loadAuthContext(auth, provisioning));
   app.use("/api/*", blockDeletesWhileImpersonating);
+  app.use("/api/*", async (c, next) => {
+    c.set("audit", audit);
+    await next();
+  });
   app.route("/api/me", createSessionRoutes());
+  app.route("/api/admin/audit-logs", createAdminAuditRoutes(prisma));
   app.route("/api/admin/feedback", createAdminFeedbackRoutes(prisma));
+  app.route("/api/audit-logs", createAuditRoutes(prisma));
   app.route("/api/agencies", createAgenciesRoutes(prisma));
   app.route("/api/clients", createClientsRoutes(prisma));
   app.route("/api/contracts", createContractsRoutes(prisma));

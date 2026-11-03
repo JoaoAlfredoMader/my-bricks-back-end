@@ -1,18 +1,42 @@
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { admin, anonymous, organization } from "better-auth/plugins";
 import type { Env } from "../../config/env.js";
 import type { PrismaClient } from "../../lib/prisma.js";
+import { type AuditEvent, type AuditRecorder, clientIp } from "../audit/audit.recorder.js";
 import type { ProvisioningService } from "./provisioning.service.js";
 
 export interface AuthDependencies {
   prisma: PrismaClient;
   env: Env;
   provisioning: ProvisioningService;
+  audit: AuditRecorder;
 }
 
-export function createAuth({ prisma, env, provisioning }: AuthDependencies) {
+interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export function createAuth({ prisma, env, provisioning, audit }: AuthDependencies) {
   const googleEnabled = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+
+  /** Leaves a trace of an authentication event, with the request's address and browser. */
+  async function trace(
+    request: Request | undefined,
+    event: Omit<AuditEvent, "ipAddress" | "userAgent" | "actor"> & { user: SessionUser | null },
+  ) {
+    const { user, ...rest } = event;
+    const role = user && event.organizationId ? await provisioning.memberRole(event.organizationId, user.id) : null;
+    await audit.record({
+      ...rest,
+      actor: user ? { ...user, role } : null,
+      ipAddress: request ? clientIp(request.headers) : null,
+      userAgent: request?.headers.get("user-agent") ?? null,
+    });
+  }
 
   return betterAuth({
     appName: "MyBricks",
@@ -56,6 +80,89 @@ export function createAuth({ prisma, env, provisioning }: AuthDependencies) {
         },
       }),
     ],
+
+    hooks: {
+      // Sessions are destroyed by these calls, so who is acting has to be read before they run.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-out" && ctx.path !== "/admin/stop-impersonating") return;
+        const current = await getSessionFromCtx(ctx).catch(() => null);
+        if (!current) return;
+
+        const { session, user } = current;
+        const impersonatedBy = (session as { impersonatedBy?: string | null }).impersonatedBy ?? null;
+        const organizationId = (session as { activeOrganizationId?: string | null }).activeOrganizationId ?? null;
+        if (ctx.path === "/admin/stop-impersonating") {
+          if (!impersonatedBy) return;
+          await trace(ctx.request, {
+            action: "impersonate_end",
+            entityType: "member",
+            entityId: user.id,
+            organizationId,
+            impersonatedById: impersonatedBy,
+            user,
+          });
+        } else {
+          await trace(ctx.request, { action: "logout", organizationId, impersonatedById: impersonatedBy, user });
+        }
+      }),
+
+      after: createAuthMiddleware(async (ctx) => {
+        const created = ctx.context.newSession;
+        switch (ctx.path) {
+          case "/sign-in/email":
+          case "/sign-in/anonymous":
+          case "/sign-up/email":
+          case "/callback/:id":
+            if (created) {
+              // A brand-new account gets its session before its first organization exists.
+              const organizationId =
+                (created.session as { activeOrganizationId?: string | null }).activeOrganizationId ??
+                (await provisioning.initialOrganizationId(created.user.id));
+              await trace(ctx.request, { action: "login", organizationId, user: created.user });
+            }
+            return;
+
+          case "/admin/impersonate-user": {
+            const impersonatedBy = (created?.session as { impersonatedBy?: string | null } | undefined)?.impersonatedBy;
+            if (created && impersonatedBy) {
+              await trace(ctx.request, {
+                action: "impersonate_start",
+                entityType: "member",
+                entityId: created.user.id,
+                organizationId: (created.session as { activeOrganizationId?: string | null }).activeOrganizationId ?? null,
+                impersonatedById: impersonatedBy,
+                user: created.user,
+              });
+            }
+            return;
+          }
+
+          case "/organization/invite-member":
+          case "/organization/remove-member": {
+            const result = ctx.context.returned;
+            if (!result || result instanceof Error) return;
+            const actor = await getSessionFromCtx(ctx).catch(() => null);
+            const invited = ctx.path === "/organization/invite-member";
+            await trace(ctx.request, {
+              action: invited ? "invite_member" : "remove_member",
+              entityType: "member",
+              entityId: invited ? ((result as { id?: string }).id ?? null) : null,
+              details: JSON.stringify(
+                invited
+                  ? { email: (ctx.body as { email?: string } | undefined)?.email, role: (ctx.body as { role?: string } | undefined)?.role }
+                  : { member: (ctx.body as { memberIdOrEmail?: string } | undefined)?.memberIdOrEmail },
+              ),
+              organizationId:
+                (ctx.body as { organizationId?: string } | undefined)?.organizationId ??
+                (actor?.session as { activeOrganizationId?: string | null } | undefined)?.activeOrganizationId ??
+                null,
+              user: actor?.user ?? null,
+            });
+            return;
+          }
+        }
+      }),
+    },
 
     databaseHooks: {
       user: {

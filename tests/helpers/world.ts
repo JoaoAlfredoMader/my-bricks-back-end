@@ -1,6 +1,8 @@
 import { createApp } from "../../src/app.js";
 import { loadEnv } from "../../src/config/env.js";
 import { createPrismaClient } from "../../src/lib/prisma.js";
+import { createAuditRecorder } from "../../src/modules/audit/audit.recorder.js";
+import { createAuditRepository } from "../../src/modules/audit/audit.repository.js";
 import { createAuth } from "../../src/modules/auth/auth.js";
 import { createProvisioningRepository } from "../../src/modules/auth/provisioning.repository.js";
 import { createProvisioningService } from "../../src/modules/auth/provisioning.service.js";
@@ -12,8 +14,9 @@ export const prisma = createPrismaClient(env.DATABASE_URL);
 const provisioning = createProvisioningService(createProvisioningRepository(prisma), {
   demoTtlHours: env.DEMO_TTL_HOURS,
 });
-const auth = createAuth({ prisma, env, provisioning });
-export const app = createApp({ prisma, env, auth, provisioning });
+const audit = createAuditRecorder(createAuditRepository(prisma));
+const auth = createAuth({ prisma, env, provisioning, audit });
+export const app = createApp({ prisma, env, auth, provisioning, audit });
 
 /** Wipes users, organizations and everything that hangs from them. Reference data is kept. */
 export async function resetDatabase(): Promise<void> {
@@ -33,12 +36,19 @@ export interface ApiResponse {
 export class Session {
   private cookie = "";
 
-  async call(method: string, path: string, body?: unknown, rawBody?: string): Promise<ApiResponse> {
+  async call(
+    method: string,
+    path: string,
+    body?: unknown,
+    rawBody?: string,
+    headers: Record<string, string> = {},
+  ): Promise<ApiResponse> {
     const res = await app.request(path, {
       method,
       headers: {
         "content-type": "application/json",
         origin: env.FRONTEND_URL,
+        ...headers,
         ...(this.cookie ? { cookie: this.cookie } : {}),
       },
       body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),

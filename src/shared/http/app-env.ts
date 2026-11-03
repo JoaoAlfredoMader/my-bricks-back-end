@@ -1,3 +1,5 @@
+import type { AuditRecorder } from "../../modules/audit/audit.recorder.js";
+
 /** Who is calling and in which organization (tenant) they are working. */
 export interface AuthContext {
   user: {
@@ -20,5 +22,7 @@ export interface AuthContext {
 export interface AppEnv {
   Variables: {
     auth: AuthContext | null;
+    /** Leaves a trace of what happened; see `audited`. */
+    audit: AuditRecorder;
   };
 }
