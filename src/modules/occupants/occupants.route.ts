@@ -9,7 +9,7 @@ import { createOccupantsController } from "./occupants.controller.js";
 import { createOccupantsRepository } from "./occupants.repository.js";
 import { createOccupantsService } from "./occupants.service.js";
 
-const listOccupantsQuery = z.object({
+export const listOccupantsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().trim().min(1).max(100).optional(),
@@ -24,7 +24,7 @@ export function createOccupantsRoutes(prisma: PrismaClient) {
 
   return new Hono<AppEnv>()
     .use(requireAuth)
-    .get("/", validate("query", listOccupantsQuery), async (c) => {
+    .get("/", validate("query", listOccupantsQuerySchema), async (c) => {
       const { body } = await controller.list(tenantScope(c), c.req.valid("query"));
       return c.json(body);
     });

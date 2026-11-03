@@ -8,7 +8,7 @@ import { createLookupsController } from "./lookups.controller.js";
 import { createLookupsRepository } from "./lookups.repository.js";
 import { createLookupsService } from "./lookups.service.js";
 
-const searchCitiesQuery = z.object({
+export const searchCitiesQuerySchema = z.object({
   search: z.string().trim().min(2).max(100),
   state: z
     .string()
@@ -25,7 +25,7 @@ export function createLookupsRoutes(prisma: PrismaClient) {
 
   return new Hono<AppEnv>()
     .use(requireAuth)
-    .get("/cities", validate("query", searchCitiesQuery), async (c) => {
+    .get("/cities", validate("query", searchCitiesQuerySchema), async (c) => {
       const { body } = await controller.searchCities(c.req.valid("query"));
       return c.json(body);
     })

@@ -12,9 +12,9 @@ import { createKpisService } from "./kpis.service.js";
 /** Calculate as of this date (`YYYY-MM-DD`); defaults to today. */
 const asOf = z.iso.date().optional();
 
-const portfolioQuery = z.object({ asOf, clientId: z.uuid().optional() });
-const propertyQuery = z.object({ asOf });
-const propertyParam = z.object({ id: z.uuid() });
+export const portfolioQuerySchema = z.object({ asOf, clientId: z.uuid().optional() });
+export const propertyKpisQuerySchema = z.object({ asOf });
+export const propertyKpisParamSchema = z.object({ id: z.uuid() });
 
 /** Route layer: read-only indicators, always calculated on request from the stored data. */
 export function createKpisRoutes(prisma: PrismaClient) {
@@ -22,11 +22,11 @@ export function createKpisRoutes(prisma: PrismaClient) {
 
   return new Hono<AppEnv>()
     .use(requireAuth)
-    .get("/portfolio", validate("query", portfolioQuery), async (c) => {
+    .get("/portfolio", validate("query", portfolioQuerySchema), async (c) => {
       const { body } = await controller.portfolio(tenantScope(c), c.req.valid("query"));
       return c.json(body);
     })
-    .get("/properties/:id", validate("param", propertyParam), validate("query", propertyQuery), async (c) => {
+    .get("/properties/:id", validate("param", propertyKpisParamSchema), validate("query", propertyKpisQuerySchema), async (c) => {
       const { body } = await controller.property(tenantScope(c), c.req.valid("param").id, c.req.valid("query"));
       return c.json(body);
     });

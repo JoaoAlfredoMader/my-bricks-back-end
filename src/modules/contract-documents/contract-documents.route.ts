@@ -13,7 +13,7 @@ import { createContractDocumentsController } from "./contract-documents.controll
 import { createContractDocumentsRepository } from "./contract-documents.repository.js";
 import { createContractDocumentsService } from "./contract-documents.service.js";
 
-const contractParam = z.object({ id: z.uuid() });
+export const contractPdfParamSchema = z.object({ id: z.uuid() });
 
 /** Route layer. Mounted under `/api/contracts/:id/pdf`. */
 export function createContractDocumentsRoutes(prisma: PrismaClient, storage: StorageProvider) {
@@ -27,11 +27,11 @@ export function createContractDocumentsRoutes(prisma: PrismaClient, storage: Sto
 
   return new Hono<AppEnv>()
     .use(requireAuth)
-    .post("/", audited("generate_pdf", "contract"), validate("param", contractParam), async (c) => {
+    .post("/", audited("generate_pdf", "contract"), validate("param", contractPdfParamSchema), async (c) => {
       const { body } = await controller.generate(tenantScope(c), c.req.valid("param").id);
       return c.json(body);
     })
-    .get("/", validate("param", contractParam), async (c) => {
+    .get("/", validate("param", contractPdfParamSchema), async (c) => {
       const { body } = await controller.download(tenantScope(c), c.req.valid("param").id);
       return c.body(new Uint8Array(body.bytes), 200, {
         "content-type": "application/pdf",
