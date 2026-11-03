@@ -249,6 +249,7 @@ Table organizations {
   name varchar(255) [not null]
   slug varchar(100) [not null, unique]
   logo text
+  metadata text [note: 'Required by the Better Auth organization plugin (JSON text). Unused by MyBricks']
   is_demo boolean [not null, default: false, note: 'Guest/demo workspace']
   demo_expires_at timestamptz [note: 'Cleanup job deletes expired demo organizations (TTL 24h). Job must delete storage objects first']
   created_at timestamptz [not null, default: `now()`]

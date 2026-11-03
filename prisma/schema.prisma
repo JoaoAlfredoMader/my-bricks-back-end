@@ -298,6 +298,8 @@ model Organization {
   name         String    @db.VarChar(255)
   slug         String    @unique @db.VarChar(100)
   logo         String?
+  /// Required by the Better Auth organization plugin (JSON text). Unused by MyBricks.
+  metadata     String?
   /// Guest/demo workspace
   isDemo       Boolean   @default(false) @map("is_demo")
   /// Cleanup job deletes expired demo organizations (TTL 24h). Delete storage objects first.
