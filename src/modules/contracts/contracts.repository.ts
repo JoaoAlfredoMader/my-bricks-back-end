@@ -19,6 +19,7 @@ const select = {
   startDate: true,
   endDate: true,
   notes: true,
+  pdfFileId: true,
   createdAt: true,
   updatedAt: true,
   property: { select: { name: true } },

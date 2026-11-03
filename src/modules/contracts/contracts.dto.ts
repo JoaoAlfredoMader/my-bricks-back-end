@@ -15,6 +15,8 @@ export interface ContractDto {
   occupant: { id: string; name: string; document: string | null; email: string | null; phone: string | null };
   /** Conventional contracts only. */
   rentTerms: { monthlyRentCents: number; dueDay: number; adjustmentIndex: AdjustmentIndex | null } | null;
+  /** Path of the generated PDF, once there is one (see `POST /api/contracts/:id/pdf`). */
+  pdfUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +51,7 @@ export function toContractDto(record: ContractRecord): ContractDto {
       dueDay: record.rentTerms.dueDay,
       adjustmentIndex: record.rentTerms.adjustmentIndex,
     },
+    pdfUrl: record.pdfFileId ? `/api/contracts/${record.id}/pdf` : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
