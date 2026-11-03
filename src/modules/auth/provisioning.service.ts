@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { DemoSeeder } from "../demo/demo-workspace.js";
 import type { ProvisioningRepository } from "./provisioning.repository.js";
 
 export interface ProvisionedUser {
@@ -18,6 +19,8 @@ export interface ProvisioningService {
 
 export interface ProvisioningOptions {
   demoTtlHours: number;
+  /** Fills a guest's demo organization with sample data. Without it the workspace starts empty. */
+  demoSeeder?: DemoSeeder;
 }
 
 function slugify(value: string): string {
@@ -45,7 +48,7 @@ export function personalOrganizationName(userName: string): string {
 /** Service layer: provisioning rules. No HTTP, no Prisma. */
 export function createProvisioningService(
   repository: ProvisioningRepository,
-  { demoTtlHours }: ProvisioningOptions,
+  { demoTtlHours, demoSeeder }: ProvisioningOptions,
 ): ProvisioningService {
   return {
     async provisionForNewUser(user) {
@@ -70,6 +73,16 @@ export function createProvisioningService(
 
       // Better Auth creates the session before this hook runs, so activate the organization here.
       await repository.setActiveOrganizationForSessions(user.id, organization.id);
+
+      // The sample portfolio is a courtesy: if it cannot be written the guest still gets a working,
+      // empty workspace instead of a failed sign-in.
+      if (user.isAnonymous && demoSeeder) {
+        try {
+          await demoSeeder.seed({ organizationId: organization.id, ownerUserId: user.id });
+        } catch (error) {
+          console.error("Could not fill the demo workspace", error);
+        }
+      }
     },
 
     initialOrganizationId: (userId) => repository.findFirstOrganizationId(userId),
