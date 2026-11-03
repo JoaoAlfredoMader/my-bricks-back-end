@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
 import { createPrismaClient } from "./lib/prisma.js";
+import { createStorage } from "./lib/storage/create-storage.js";
 import { createAuditRecorder } from "./modules/audit/audit.recorder.js";
 import { createAuditRepository } from "./modules/audit/audit.repository.js";
 import { createAuth } from "./modules/auth/auth.js";
@@ -17,7 +18,8 @@ const provisioning = createProvisioningService(createProvisioningRepository(pris
 });
 const audit = createAuditRecorder(createAuditRepository(prisma));
 const auth = createAuth({ prisma, env, provisioning, audit });
-const app = createApp({ prisma, env, auth, provisioning, audit });
+const storage = createStorage(env);
+const app = createApp({ prisma, env, auth, provisioning, audit, storage });
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`MyBricks API listening on http://localhost:${info.port}`);

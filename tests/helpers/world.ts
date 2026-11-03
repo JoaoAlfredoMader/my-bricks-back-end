@@ -1,6 +1,7 @@
 import { createApp } from "../../src/app.js";
 import { loadEnv } from "../../src/config/env.js";
 import { createPrismaClient } from "../../src/lib/prisma.js";
+import { createStorage } from "../../src/lib/storage/create-storage.js";
 import { createAuditRecorder } from "../../src/modules/audit/audit.recorder.js";
 import { createAuditRepository } from "../../src/modules/audit/audit.repository.js";
 import { createAuth } from "../../src/modules/auth/auth.js";
@@ -16,7 +17,9 @@ const provisioning = createProvisioningService(createProvisioningRepository(pris
 });
 const audit = createAuditRecorder(createAuditRepository(prisma));
 const auth = createAuth({ prisma, env, provisioning, audit });
-export const app = createApp({ prisma, env, auth, provisioning, audit });
+/** Files go to a temporary folder (see vitest.config.ts); the global setup removes it. */
+export const storage = createStorage(env);
+export const app = createApp({ prisma, env, auth, provisioning, audit, storage });
 
 /** Wipes users, organizations and everything that hangs from them. Reference data is kept. */
 export async function resetDatabase(): Promise<void> {
@@ -30,6 +33,20 @@ export interface ApiResponse {
   status: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   json: any;
+}
+
+export interface UploadPart {
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+  /** Form field name; defaults to `file`. */
+  field?: string;
+}
+
+export interface DownloadResponse {
+  status: number;
+  headers: Headers;
+  bytes: Buffer;
 }
 
 /** A browser-like client: keeps the session cookies between calls. */
@@ -63,6 +80,38 @@ export class Session {
       /* empty or not JSON */
     }
     return { status: res.status, json };
+  }
+
+  /** Sends a multipart form, the way a browser uploads a file. */
+  async upload(path: string, file: UploadPart | null, fields: Record<string, string> = {}): Promise<ApiResponse> {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) form.append(name, value);
+    if (file) form.append(file.field ?? "file", new File([new Uint8Array(file.bytes)], file.name, { type: file.type }));
+
+    const res = await app.request(path, {
+      method: "POST",
+      // No content-type: the runtime adds the multipart boundary.
+      headers: { origin: env.FRONTEND_URL, ...(this.cookie ? { cookie: this.cookie } : {}) },
+      body: form,
+    });
+    this.storeCookies(res.headers.getSetCookie());
+    const text = await res.text();
+    let json: unknown = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      /* empty or not JSON */
+    }
+    return { status: res.status, json };
+  }
+
+  /** Fetches a binary response (an image or a document). */
+  async download(path: string): Promise<DownloadResponse> {
+    const res = await app.request(path, {
+      method: "GET",
+      headers: { origin: env.FRONTEND_URL, ...(this.cookie ? { cookie: this.cookie } : {}) },
+    });
+    return { status: res.status, headers: res.headers, bytes: Buffer.from(await res.arrayBuffer()) };
   }
 
   private storeCookies(setCookies: string[]): void {

@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import type { Env } from "./config/env.js";
 import type { PrismaClient } from "./lib/prisma.js";
+import type { StorageProvider } from "./lib/storage/storage.js";
 import type { Auth } from "./modules/auth/auth.js";
 import { createAgenciesRoutes } from "./modules/agencies/agencies.route.js";
 import type { AuditRecorder } from "./modules/audit/audit.recorder.js";
@@ -17,6 +18,7 @@ import { createHealthRoutes } from "./modules/health/health.route.js";
 import { createKpisRoutes } from "./modules/kpis/kpis.route.js";
 import { createLookupsRoutes } from "./modules/lookups/lookups.route.js";
 import { createOccupantsRoutes } from "./modules/occupants/occupants.route.js";
+import { createPhotosRoutes } from "./modules/photos/photos.route.js";
 import { createPropertiesRoutes } from "./modules/properties/properties.route.js";
 import { createProposalsRoutes } from "./modules/proposals/proposals.route.js";
 import { createReservationsRoutes } from "./modules/reservations/reservations.route.js";
@@ -28,13 +30,16 @@ import { blockDeletesWhileImpersonating, loadAuthContext } from "./shared/http/a
 
 export interface AppDependencies {
   prisma: PrismaClient;
-  env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV">>;
+  env: Pick<Env, "FRONTEND_URL"> & Partial<Pick<Env, "NODE_ENV" | "MAX_UPLOAD_MB">>;
   auth: Auth;
   provisioning: ProvisioningService;
   audit: AuditRecorder;
+  /** Where uploaded files go (photos, documents). */
+  storage: StorageProvider;
 }
 
-export function createApp({ prisma, env, auth, provisioning, audit }: AppDependencies) {
+export function createApp({ prisma, env, auth, provisioning, audit, storage }: AppDependencies) {
+  const maxUploadBytes = (env.MAX_UPLOAD_MB ?? 15) * 1024 * 1024;
   const app = new Hono<AppEnv>();
 
   // Request logs would drown the test output.
@@ -62,6 +67,7 @@ export function createApp({ prisma, env, auth, provisioning, audit }: AppDepende
   app.route("/api/kpis", createKpisRoutes(prisma));
   app.route("/api/lookups", createLookupsRoutes(prisma));
   app.route("/api/properties", createPropertiesRoutes(prisma));
+  app.route("/api/properties/:propertyId/photos", createPhotosRoutes(prisma, storage, maxUploadBytes));
   app.route("/api/properties/:propertyId/proposals", createProposalsRoutes(prisma));
   app.route("/api/occupants", createOccupantsRoutes(prisma));
   app.route("/api/reservations", createReservationsRoutes(prisma));

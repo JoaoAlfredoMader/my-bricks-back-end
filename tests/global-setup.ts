@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { rm } from "node:fs/promises";
 import pg from "pg";
 import type { TestProject } from "vitest/node";
 
@@ -6,7 +7,7 @@ import type { TestProject } from "vitest/node";
  * Prepares the test database once per run: creates it when missing, applies the migrations and
  * seeds the reference data (both are idempotent).
  */
-export default async function setup(project: TestProject): Promise<void> {
+export default async function setup(project: TestProject): Promise<() => Promise<void>> {
   const databaseUrl = project.config.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is not set for the tests");
 
@@ -31,4 +32,10 @@ export default async function setup(project: TestProject): Promise<void> {
   const env = { ...process.env, DATABASE_URL: databaseUrl };
   execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
   execSync("npx tsx prisma/seed/index.ts", { env, stdio: "pipe" });
+
+  // Teardown: the files the tests uploaded.
+  const storageDir = project.config.env.STORAGE_DIR;
+  return async () => {
+    if (storageDir) await rm(storageDir, { recursive: true, force: true });
+  };
 }
