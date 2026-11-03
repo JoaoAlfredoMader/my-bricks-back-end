@@ -168,6 +168,21 @@ The owner panel. It needs the `admin` platform role (`users.role`, set in the da
 - **Writing never breaks the action**: a failure to write is logged and swallowed.
 - **Retention** is 12 months: the repository can purge older entries; the periodic job comes with the demo cleanup.
 
+### Contract template and PDF
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/contract-template` | the organization's template, or the default one (`isDefault: true`), with the catalog of tokens and any unknown token in the text |
+| `PUT` | `/api/contract-template` | `{ header, clauses, footer }` as HTML; **owners and admins only** |
+| `DELETE` | `/api/contract-template` | back to the default; owners and admins only |
+| `POST` | `/api/contracts/:id/pdf` | renders the contract with the template and stores it as the contract's PDF |
+| `GET` | `/api/contracts/:id/pdf` | downloads it (attachment, never cached) |
+
+- **Tokens** are written in Portuguese because the people who edit the template are Brazilian landlords: `{{locador}}`, `{{documento_locador}}`, `{{locatario}}`, `{{documento_locatario}}`, `{{imovel}}`, `{{endereco}}`, `{{valor_mensal}}`, `{{dia_vencimento}}`, `{{indice_reajuste}}`, `{{data_inicio}}`, `{{data_fim}}`, `{{data_emissao}}`. Values are HTML-escaped (a tenant named `<b>x</b>` shows as text), and an unknown token stays as typed so a typo is visible in the PDF and listed in `unknownPlaceholders`. The landlord is the property's client (its owner) or, without one, the organization.
+- **Sanitizing.** Only `p`, `h1`–`h3`, `ul`/`ol`/`li`, `br`, `strong`/`b`, `em`/`i` and `u` survive, without attributes; scripts, styles, links, images and iframes are dropped (a `div` becomes a paragraph). A template whose clauses end up with no text is refused.
+- **The PDF** is an A4 document written with `pdfkit` and the standard Helvetica fonts (they cover Portuguese): centered header, justified clauses, signature lines for the landlord and the tenant, footer and "Página i de n". Only characters of the Latin-1/Windows-1252 set render correctly.
+- Only **conventional** contracts have a PDF (the text talks about monthly rent, due day and adjustment); a short-stay contract answers `422`. Generating again replaces the previous PDF (its record and object are removed), and the contract exposes `pdfUrl` once it has one. The default contract is a plain residential lease meant as a starting point, not legal advice.
+
 ### Photos — `/api/properties/:propertyId/photos`
 
 | Method | Path | Notes |
