@@ -15,6 +15,7 @@ import { createOccupantsRoutes } from "./modules/occupants/occupants.route.js";
 import { createPropertiesRoutes } from "./modules/properties/properties.route.js";
 import { createReservationsRoutes } from "./modules/reservations/reservations.route.js";
 import { createSessionRoutes } from "./modules/session/session.route.js";
+import { createTransactionsRoutes } from "./modules/transactions/transactions.route.js";
 import { AppError } from "./shared/errors/app-error.js";
 import type { AppEnv } from "./shared/http/app-env.js";
 import { loadAuthContext } from "./shared/http/auth.middleware.js";
@@ -44,6 +45,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/properties", createPropertiesRoutes(prisma));
   app.route("/api/occupants", createOccupantsRoutes(prisma));
   app.route("/api/reservations", createReservationsRoutes(prisma));
+  app.route("/api/transactions", createTransactionsRoutes(prisma));
 
   app.notFound((c) =>
     c.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404),
