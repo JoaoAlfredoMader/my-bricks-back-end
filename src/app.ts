@@ -5,6 +5,7 @@ import { logger } from "hono/logger";
 import type { Env } from "./config/env.js";
 import type { PrismaClient } from "./lib/prisma.js";
 import type { Auth } from "./modules/auth/auth.js";
+import { createAgenciesRoutes } from "./modules/agencies/agencies.route.js";
 import { createAuthRoutes } from "./modules/auth/auth.route.js";
 import type { ProvisioningService } from "./modules/auth/provisioning.service.js";
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
@@ -41,6 +42,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/auth", createAuthRoutes(auth));
   app.use("/api/*", loadAuthContext(auth, provisioning));
   app.route("/api/me", createSessionRoutes());
+  app.route("/api/agencies", createAgenciesRoutes(prisma));
   app.route("/api/clients", createClientsRoutes(prisma));
   app.route("/api/contracts", createContractsRoutes(prisma));
   app.route("/api/kpis", createKpisRoutes(prisma));
