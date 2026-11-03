@@ -142,6 +142,32 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 - `GET /api/properties/:id/financing-schedule?asOf=` returns the SAC or Price schedule (installment, interest, amortization and balance per month, due on the same day of each month, clamped to short months) and where the financing stands on `asOf`: paid and remaining installments, outstanding balance, total paid, total interest and the next installment. The nominal annual rate (percent) is split evenly into a monthly rate; rounding is per row and the last amortization absorbs the difference.
 - Not covered yet: photos and documents (they wait for the object storage), geocoding.
 
+### Feedback — `/api/feedback`
+
+Any signed-in user (guests included) can `POST /` a message (3 to 5000 characters) and `GET /` what they sent (`status`, `page`, `pageSize`). The attachment will come with the object storage.
+
+### Platform admin — `/api/admin/*`
+
+The owner panel. It needs the `admin` platform role (`users.role`, set in the database or by another admin); being the owner of an organization is not enough, and a session that is *impersonating* never gets these routes.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/admin/feedback` | everything every organization sent, with author and organization (`status`, `page`, `pageSize`) |
+| `PATCH` | `/api/admin/feedback/:id` | `{ "status": "open" \| "resolved" }` |
+| `GET` | `/api/admin/audit-logs` | the whole audit trail, optionally narrowed with `organizationId` |
+| — | `/api/auth/admin/*` | Better Auth's admin plugin: list/ban users, `impersonate-user`, `stop-impersonating` |
+
+**Impersonation** ("see as"): the session becomes the target user's and `/api/me` reports `impersonatedById`. The admin can read and edit as that user, but **every `DELETE` answers `403`** until `stop-impersonating`, and everything done in the meantime is audited with the impersonator.
+
+### Audit log — `/api/audit-logs`
+
+`GET /` returns the trail of the caller's organization, **only for owners and admins** (members get `403`; the organization comes from the session, never from the query). Filters: `action`, `entityType`, `actorUserId`, `from` / `to` (calendar days, inclusive), `page`, `pageSize` (max 100). Newest first; the numeric `id` travels as a string.
+
+- **What is recorded.** Successful (2xx) creations, updates and deletions of properties, clients, transactions, contracts (including `end_contract` and `cancel`) and reservations, feedback, plus logins (e-mail, guest, sign-up, social), logouts, member invitations and removals, and impersonation start/end. Reads, rejected requests (4xx) and blocked deletes leave no trace. Each route opts in with `audited(action, entityType)`; the record id is the `:id` of the path or the `id` of the created resource.
+- **Each entry has** the actor (a snapshot of name, e-mail and role, so it stays readable after the user is deleted), the organization (`null` for platform-level events), the impersonator when there is one, the request (`method`, `path`, `status` in `details`), the address (from `x-forwarded-for` / `x-real-ip`, so run behind a proxy that sets it) and the browser.
+- **Writing never breaks the action**: a failure to write is logged and swallowed.
+- **Retention** is 12 months: the repository can purge older entries; the periodic job comes with the demo cleanup.
+
 ### Agencies — `/api/agencies`
 
 The agencies that manage the organization's properties; shared by every member. `GET /` (`search`, `page`, `pageSize`), `POST /`, `GET /:id`, `PATCH /:id`, `DELETE /:id` (`409` while any property still uses it). The name is unique per organization.
