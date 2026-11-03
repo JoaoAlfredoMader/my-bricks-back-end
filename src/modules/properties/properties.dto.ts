@@ -1,4 +1,12 @@
-import type { AcquisitionType, ConservationState, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
+import type {
+  AcquisitionType,
+  AmortizationSystem,
+  ConservationState,
+  PropertyType,
+  RegistrationStatus,
+  RentalMode,
+  UsageType,
+} from "../../generated/prisma/enums.js";
 import { centsToNumber } from "../../shared/money.js";
 import type { PropertyRecord } from "./properties.repository.js";
 import { derivePropertyStatus, type PropertyStatus } from "./property-status.js";
@@ -46,6 +54,25 @@ export interface PropertyDto {
   address: PropertyAddressDto | null;
   manualRental: { tenantName: string | null; monthlyRentCents: number; dueDay: number | null } | null;
   acquisition: { acquisitionType: AcquisitionType; acquiredOn: string | null; costCents: number | null } | null;
+  /** Only for properties acquired by purchase or construction. */
+  financing: {
+    lender: string | null;
+    financedAmountCents: number;
+    termMonths: number;
+    /** Nominal rate per year, in percent. */
+    annualInterestRate: number;
+    amortizationSystem: AmortizationSystem;
+    firstInstallmentOn: string;
+  } | null;
+  legalRecord: {
+    registrationStatus: RegistrationStatus;
+    irregularityDescription: string | null;
+    registryNumber: string | null;
+    registryOffice: string | null;
+    notes: string | null;
+  } | null;
+  /** A row means the property is insured. */
+  insurance: { description: string | null } | null;
   createdById: string;
   createdAt: string;
   updatedAt: string;
@@ -114,6 +141,18 @@ export function toPropertyDto(record: PropertyRecord): PropertyDto {
       acquiredOn: record.acquisition.acquiredOn ? record.acquisition.acquiredOn.toISOString().slice(0, 10) : null,
       costCents: record.acquisition.costCents === null ? null : centsToNumber(record.acquisition.costCents),
     },
+    financing: record.acquisition?.financing
+      ? {
+          lender: record.acquisition.financing.lender,
+          financedAmountCents: centsToNumber(record.acquisition.financing.financedAmountCents),
+          termMonths: record.acquisition.financing.termMonths,
+          annualInterestRate: record.acquisition.financing.annualInterestRate.toNumber(),
+          amortizationSystem: record.acquisition.financing.amortizationSystem,
+          firstInstallmentOn: record.acquisition.financing.firstInstallmentOn.toISOString().slice(0, 10),
+        }
+      : null,
+    legalRecord: record.legalRecord,
+    insurance: record.insurance,
     createdById: record.createdById,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),

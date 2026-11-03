@@ -1,4 +1,4 @@
-import type { PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
+import type { AcquisitionType, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TenantScope } from "../../shared/http/tenant.js";
 import { numberToCents } from "../../shared/money.js";
@@ -6,6 +6,9 @@ import { type Page, type PropertyDto, toPropertyDto } from "./properties.dto.js"
 import type {
   AcquisitionData,
   AddressData,
+  FinancingData,
+  InsuranceData,
+  LegalRecordData,
   ManualRentalData,
   PropertiesRepository,
   PropertyChildren,
@@ -53,6 +56,42 @@ function toAcquisitionData(input: NonNullable<CreatePropertyInput["acquisition"]
     acquiredOn: input.acquiredOn ? new Date(`${input.acquiredOn}T00:00:00.000Z`) : null,
     costCents: input.costCents == null ? null : numberToCents(input.costCents),
   };
+}
+
+function toLegalRecordData(input: NonNullable<CreatePropertyInput["legalRecord"]>): LegalRecordData {
+  return {
+    registrationStatus: input.registrationStatus,
+    irregularityDescription: input.irregularityDescription ?? null,
+    registryNumber: input.registryNumber ?? null,
+    registryOffice: input.registryOffice ?? null,
+    notes: input.notes ?? null,
+  };
+}
+
+function toInsuranceData(input: NonNullable<CreatePropertyInput["insurance"]>): InsuranceData {
+  return { description: input.description ?? null };
+}
+
+function toFinancingData(
+  input: NonNullable<CreatePropertyInput["financing"]>,
+  acquisitionType: AcquisitionType,
+): FinancingData {
+  return {
+    acquisitionType,
+    lender: input.lender ?? null,
+    financedAmountCents: numberToCents(input.financedAmountCents),
+    termMonths: input.termMonths,
+    annualInterestRate: input.annualInterestRate,
+    amortizationSystem: input.amortizationSystem,
+    firstInstallmentOn: new Date(`${input.firstInstallmentOn}T00:00:00.000Z`),
+  };
+}
+
+/** A financing only exists for a property acquired by purchase or construction. */
+function financingRuleErrors(acquisitionType: AcquisitionType | null, hasFinancing: boolean): FieldError[] {
+  if (!hasFinancing) return [];
+  if (acquisitionType === "purchase" || acquisitionType === "construction") return [];
+  return [{ path: "financing", message: "A financing needs an acquisition by purchase or construction" }];
 }
 
 function toManualRentalData(input: NonNullable<CreatePropertyInput["manualRental"]>): ManualRentalData {
@@ -160,6 +199,7 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
 
       assertNoErrors([
         ...(await checkConsistency(data, Boolean(input.manualRental))),
+        ...financingRuleErrors(input.acquisition?.acquisitionType ?? null, Boolean(input.financing)),
         ...(await checkReferences(scope, {
           clientId: data.clientId,
           agencyId: data.agencyId,
@@ -171,6 +211,12 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
         address: input.address ? toAddressData(input.address) : null,
         manualRental: input.manualRental ? toManualRentalData(input.manualRental) : null,
         acquisition: input.acquisition ? toAcquisitionData(input.acquisition) : null,
+        legalRecord: input.legalRecord ? toLegalRecordData(input.legalRecord) : null,
+        insurance: input.insurance ? toInsuranceData(input.insurance) : null,
+        financing:
+          input.financing && input.acquisition
+            ? toFinancingData(input.financing, input.acquisition.acquisitionType)
+            : null,
       };
       const created = await repository.create(
         { organizationId: tenant.organizationId, createdById: tenant.userId },
@@ -185,7 +231,17 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
       const current = await repository.findById(scope, id);
       if (!current) throw AppError.notFound("Property not found");
 
-      const { address, manualRental, acquisition, estimatedValueCents, annualExpensesCents, ...scalars } = input;
+      const {
+        address,
+        manualRental,
+        acquisition,
+        legalRecord,
+        insurance,
+        financing,
+        estimatedValueCents,
+        annualExpensesCents,
+        ...scalars
+      } = input;
       const patch: Partial<PropertyData> = {};
       // Zod already validated each value; `undefined` means "not sent", `null` means "clear".
       for (const [key, value] of Object.entries(scalars)) {
@@ -197,7 +253,12 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
       if (annualExpensesCents !== undefined) patch.annualExpensesCents = numberToCents(annualExpensesCents);
 
       const rentalMode = patch.rentalMode ?? current.rentalMode;
+      // The financing rule is checked on the state after the write, even when only one side is sent.
+      const acquisitionType =
+        acquisition !== undefined ? (acquisition?.acquisitionType ?? null) : (current.acquisition?.acquisitionType ?? null);
+      const hasFinancing = financing !== undefined ? financing !== null : Boolean(current.acquisition?.financing);
       assertNoErrors([
+        ...financingRuleErrors(acquisitionType, hasFinancing),
         ...(await checkConsistency(
           {
             propertyType: patch.propertyType ?? current.propertyType,
@@ -220,6 +281,11 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
         ...(address !== undefined ? { address: address ? toAddressData(address) : null } : {}),
         ...(manualRental !== undefined ? { manualRental: manualRental ? toManualRentalData(manualRental) : null } : {}),
         ...(acquisition !== undefined ? { acquisition: acquisition ? toAcquisitionData(acquisition) : null } : {}),
+        ...(legalRecord !== undefined ? { legalRecord: legalRecord ? toLegalRecordData(legalRecord) : null } : {}),
+        ...(insurance !== undefined ? { insurance: insurance ? toInsuranceData(insurance) : null } : {}),
+        ...(financing !== undefined && acquisitionType
+          ? { financing: financing ? toFinancingData(financing, acquisitionType) : null }
+          : {}),
       };
       const updated = await repository.update(scope, id, patch, children);
       if (!updated) throw AppError.notFound("Property not found");
