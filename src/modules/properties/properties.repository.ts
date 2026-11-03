@@ -1,8 +1,10 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type {
   AcquisitionType,
+  AmortizationSystem,
   ConservationState,
   PropertyType,
+  RegistrationStatus,
   RentalMode,
   UsageType,
 } from "../../generated/prisma/enums.js";
@@ -49,7 +51,33 @@ const select = {
     },
   },
   manualRental: { select: { tenantName: true, monthlyRentCents: true, dueDay: true } },
-  acquisition: { select: { acquisitionType: true, acquiredOn: true, costCents: true } },
+  acquisition: {
+    select: {
+      acquisitionType: true,
+      acquiredOn: true,
+      costCents: true,
+      financing: {
+        select: {
+          lender: true,
+          financedAmountCents: true,
+          termMonths: true,
+          annualInterestRate: true,
+          amortizationSystem: true,
+          firstInstallmentOn: true,
+        },
+      },
+    },
+  },
+  legalRecord: {
+    select: {
+      registrationStatus: true,
+      irregularityDescription: true,
+      registryNumber: true,
+      registryOffice: true,
+      notes: true,
+    },
+  },
+  insurance: { select: { description: true } },
   /** Only used to derive the status. */
   contracts: { where: { status: "active" }, select: { id: true }, take: 1 },
 } satisfies Prisma.PropertySelect;
@@ -107,11 +135,37 @@ export interface AcquisitionData {
   costCents: bigint | null;
 }
 
+export interface LegalRecordData {
+  registrationStatus: RegistrationStatus;
+  irregularityDescription: string | null;
+  registryNumber: string | null;
+  registryOffice: string | null;
+  notes: string | null;
+}
+
+export interface InsuranceData {
+  description: string | null;
+}
+
+export interface FinancingData {
+  /** Must match the acquisition type; the database keeps the two in sync. */
+  acquisitionType: AcquisitionType;
+  lender: string | null;
+  financedAmountCents: bigint;
+  termMonths: number;
+  annualInterestRate: number;
+  amortizationSystem: AmortizationSystem;
+  firstInstallmentOn: Date;
+}
+
 /** `undefined` leaves the child untouched, `null` removes it, a value creates or replaces it. */
 export interface PropertyChildren {
   address?: AddressData | null;
   manualRental?: ManualRentalData | null;
   acquisition?: AcquisitionData | null;
+  legalRecord?: LegalRecordData | null;
+  insurance?: InsuranceData | null;
+  financing?: FinancingData | null;
 }
 
 export interface PropertyListQuery {
@@ -145,6 +199,10 @@ export interface PropertiesRepository {
   agencyExists(organizationId: string, agencyId: string): Promise<boolean>;
   /** Whether the client exists in the organization and is visible within the scope. */
   clientVisible(scope: PropertyScope, clientId: string): Promise<boolean>;
+}
+
+function withoutAcquisitionType({ acquisitionType: _mirrored, ...financing }: FinancingData) {
+  return financing;
 }
 
 function whereFor(scope: PropertyScope): Prisma.PropertyWhereInput {
@@ -188,7 +246,21 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
           ...(agencyId ? { agencyId } : {}),
           ...(children.address ? { address: { create: children.address } } : {}),
           ...(children.manualRental ? { manualRental: { create: children.manualRental } } : {}),
-          ...(children.acquisition ? { acquisition: { create: children.acquisition } } : {}),
+          ...(children.acquisition
+            ? {
+                acquisition: {
+                  create: {
+                    ...children.acquisition,
+                    // The mirrored acquisition type is filled by Prisma from the parent.
+                    ...(children.financing
+                      ? { financing: { create: withoutAcquisitionType(children.financing) } }
+                      : {}),
+                  },
+                },
+              }
+            : {}),
+          ...(children.legalRecord ? { legalRecord: { create: children.legalRecord } } : {}),
+          ...(children.insurance ? { insurance: { create: children.insurance } } : {}),
         },
         select,
       });
@@ -223,6 +295,33 @@ export function createPropertiesRepository(prisma: PrismaClient): PropertiesRepo
             where: { propertyId: id },
             create: { propertyId: id, ...children.acquisition },
             update: children.acquisition,
+          });
+        }
+
+        if (children.financing === null) await tx.propertyFinancing.deleteMany({ where: { propertyId: id } });
+        else if (children.financing) {
+          await tx.propertyFinancing.upsert({
+            where: { propertyId: id },
+            create: { propertyId: id, ...children.financing },
+            update: children.financing,
+          });
+        }
+
+        if (children.legalRecord === null) await tx.propertyLegalRecord.deleteMany({ where: { propertyId: id } });
+        else if (children.legalRecord) {
+          await tx.propertyLegalRecord.upsert({
+            where: { propertyId: id },
+            create: { propertyId: id, ...children.legalRecord },
+            update: children.legalRecord,
+          });
+        }
+
+        if (children.insurance === null) await tx.propertyInsurance.deleteMany({ where: { propertyId: id } });
+        else if (children.insurance) {
+          await tx.propertyInsurance.upsert({
+            where: { propertyId: id },
+            create: { propertyId: id, ...children.insurance },
+            update: children.insurance,
           });
         }
 
