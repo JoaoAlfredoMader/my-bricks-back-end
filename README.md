@@ -40,7 +40,7 @@ src/
 ## Getting started
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # then set BETTER_AUTH_SECRET (openssl rand -base64 48)
 npm install
 npm run db:up          # PostgreSQL on localhost:5433
 npm run db:generate    # Prisma client -> src/generated/prisma
@@ -48,6 +48,19 @@ npm run db:migrate     # apply migrations
 npm run db:seed        # reference data (idempotent)
 npm run dev            # http://localhost:3000/health
 ```
+
+## Authentication
+
+[Better Auth](https://www.better-auth.com) mounted at `/api/auth/*`, with the `organization`, `admin` and `anonymous` plugins. E-mail/password always; Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set.
+
+- **Every user works inside an organization (the tenant).** Signing up creates a personal organization (`Portfólio de <first name>`) with the user as `owner`, and activates it on every session.
+- **Guest mode.** `POST /api/auth/sign-in/anonymous` creates a guest user with a demo organization that expires after `DEMO_TTL_HOURS` (default 24).
+- **Guest becomes a real user.** Signing up while holding a guest session adopts the demo workspace: memberships move to the new user, authorship foreign keys follow through `ON UPDATE CASCADE`, the demo flag is cleared and the empty personal organization is dropped.
+- **Invitations are links.** There is no e-mail provider yet: `POST /api/auth/organization/invite-member` returns the invitation id, and the front-end builds the link from it.
+- **Platform admin.** The `admin` plugin role lives on `users.role`; it enables the `/api/auth/admin/*` endpoints (list users, impersonation).
+- **`GET /api/me`** returns the authenticated user, the active organization and the member role. Domain routes read this context (`c.var.auth`) and never trust an organization id sent by the client.
+- Better Auth runs with `advanced.database.generateId: false`: ids come from the database (`gen_random_uuid()`).
+- The cookie is sent cross-origin only to `FRONTEND_URL` (CORS with credentials + `trustedOrigins`). In production keep front and API under the same parent domain.
 
 ## Database
 
