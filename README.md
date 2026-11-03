@@ -185,6 +185,20 @@ The model is normalized (3NF) and documented in [`docs/database/mybricks-databas
 - **Reference data** (cities, subtypes, allowed usages, transaction categories) is seeded and idempotent. Display names are pt-BR; codes (enum values) stay in English.
 - **Deleting an organization** must delete in order inside one transaction (properties, stored files, clients, occupants, agencies, organization). Postgres checks each cascade step separately, so a plain `DELETE` of the organization fails by design.
 
+## Tests
+
+[Vitest](https://vitest.dev), with PostgreSQL running (`npm run db:up`).
+
+```bash
+npm test            # whole suite
+npm run test:watch  # re-run on change
+```
+
+- **Isolated database.** Tests run against `<database>_test` on the same server (created, migrated and seeded automatically before the run), never against the development database. The helpers refuse to truncate anything whose name does not end in `_test`.
+- **`tests/unit`**: pure logic with no database (the KPI calculations).
+- **`tests/api`**: the real app wired against the test database and called in-process, one file per module. Each file tells one scenario in order (sign-ups, then creation, validation, listing, editing, visibility of members, isolation between organizations, deletion), so run a file as a whole rather than a single test. Checks inside a test are soft: a run reports every broken expectation, each with its name and the response that broke it.
+- Better Auth skips its own origin check when `NODE_ENV=test`, so only the app-level CORS is covered.
+
 ## Scripts
 
 | Script | What it does |
@@ -192,6 +206,7 @@ The model is normalized (3NF) and documented in [`docs/database/mybricks-databas
 | `npm run dev` | API with reload |
 | `npm run build` / `npm start` | compile and run |
 | `npm run typecheck` | TypeScript check |
+| `npm test` / `test:watch` | Vitest suite (see Tests) |
 | `npm run db:up` / `db:down` | start / stop local PostgreSQL |
 | `npm run db:migrate` | create/apply migrations (dev) |
 | `npm run db:seed` | seed reference data: 5,571 IBGE municipalities, property subtypes, allowed usages per property type, transaction categories |
