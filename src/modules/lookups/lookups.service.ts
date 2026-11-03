@@ -1,5 +1,5 @@
 import type { PropertyType, UsageType } from "../../generated/prisma/enums.js";
-import type { CityRecord, LookupsRepository } from "./lookups.repository.js";
+import type { CityRecord, LookupsRepository, TransactionCategoryRecord } from "./lookups.repository.js";
 
 export interface PropertyCatalogEntry {
   propertyType: PropertyType;
@@ -8,6 +8,8 @@ export interface PropertyCatalogEntry {
 }
 
 export interface LookupsService {
+  /** Revenue and expense categories; the category decides whether a transaction is revenue or expense. */
+  transactionCategories(): Promise<TransactionCategoryRecord[]>;
   searchCities(query: { search: string; state?: string; limit: number }): Promise<CityRecord[]>;
   /** For each property type: its subtypes and the usages allowed for it. Drives the property form. */
   propertyCatalog(): Promise<PropertyCatalogEntry[]>;
@@ -17,6 +19,8 @@ export interface LookupsService {
 export function createLookupsService(repository: LookupsRepository): LookupsService {
   return {
     searchCities: (query) => repository.searchCities(query),
+
+    transactionCategories: () => repository.listTransactionCategories(),
 
     async propertyCatalog() {
       const [subtypes, usages] = await Promise.all([

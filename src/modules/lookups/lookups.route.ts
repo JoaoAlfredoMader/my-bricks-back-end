@@ -29,6 +29,10 @@ export function createLookupsRoutes(prisma: PrismaClient) {
       const { body } = await controller.searchCities(c.req.valid("query"));
       return c.json(body);
     })
+    .get("/transaction-categories", async (c) => {
+      const { body } = await controller.transactionCategories();
+      return c.json(body);
+    })
     .get("/property-catalog", async (c) => {
       const { body } = await controller.propertyCatalog();
       return c.json(body);

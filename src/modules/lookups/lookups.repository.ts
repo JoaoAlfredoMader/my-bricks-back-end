@@ -1,5 +1,5 @@
 import { Prisma } from "../../generated/prisma/client.js";
-import type { PropertyType, UsageType } from "../../generated/prisma/enums.js";
+import type { PropertyType, TransactionType, UsageType } from "../../generated/prisma/enums.js";
 import type { PrismaClient } from "../../lib/prisma.js";
 
 export interface CityRecord {
@@ -19,7 +19,14 @@ export interface PropertyTypeUsageRecord {
   usageType: UsageType;
 }
 
+export interface TransactionCategoryRecord {
+  id: number;
+  transactionType: TransactionType;
+  name: string;
+}
+
 export interface LookupsRepository {
+  listTransactionCategories(): Promise<TransactionCategoryRecord[]>;
   searchCities(query: { search: string; state?: string; limit: number }): Promise<CityRecord[]>;
   listPropertySubtypes(): Promise<PropertySubtypeRecord[]>;
   listPropertyTypeUsages(): Promise<PropertyTypeUsageRecord[]>;
@@ -43,6 +50,10 @@ export function createLookupsRepository(prisma: PrismaClient): LookupsRepository
         WHERE unaccent(name) ILIKE unaccent(${pattern}) ${stateFilter}
         ORDER BY name, state
         LIMIT ${limit}`;
+    },
+
+    listTransactionCategories() {
+      return prisma.transactionCategory.findMany({ orderBy: [{ transactionType: "asc" }, { name: "asc" }] });
     },
 
     listPropertySubtypes() {
