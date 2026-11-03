@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { PersonType } from "../../generated/prisma/enums.js";
 import { normalizeDocument } from "../../shared/validation/brazilian-document.js";
-
-/** Optional text field: blank means "no value". */
-const optionalText = <TSchema extends z.ZodType<string>>(schema: TSchema) =>
-  z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? null : value), schema.nullish());
+import { optionalText } from "../../shared/validation/optional-text.js";
 
 const name = z.string().trim().min(2).max(255);
 const personType = z.enum(PersonType);
