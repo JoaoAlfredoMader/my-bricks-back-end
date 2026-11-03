@@ -10,6 +10,7 @@ import type { ProvisioningService } from "./modules/auth/provisioning.service.js
 import { createClientsRoutes } from "./modules/clients/clients.route.js";
 import { createHealthRoutes } from "./modules/health/health.route.js";
 import { createLookupsRoutes } from "./modules/lookups/lookups.route.js";
+import { createPropertiesRoutes } from "./modules/properties/properties.route.js";
 import { createSessionRoutes } from "./modules/session/session.route.js";
 import { AppError } from "./shared/errors/app-error.js";
 import type { AppEnv } from "./shared/http/app-env.js";
@@ -36,6 +37,7 @@ export function createApp({ prisma, env, auth, provisioning }: AppDependencies) 
   app.route("/api/me", createSessionRoutes());
   app.route("/api/clients", createClientsRoutes(prisma));
   app.route("/api/lookups", createLookupsRoutes(prisma));
+  app.route("/api/properties", createPropertiesRoutes(prisma));
 
   app.notFound((c) =>
     c.json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404),
