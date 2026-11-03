@@ -140,11 +140,11 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 - `legalRecord` (registration status, registry number/office, irregularity description only when irregular), `insurance` (a row means insured) and `financing` are nested the same way. A financing needs an acquisition by purchase or construction: sending one without it, or moving the acquisition to inheritance or removing it while financed, is a `400`.
 - `agencyId` links the property to the agency that manages it (`/api/agencies`).
 - `GET /api/properties/:id/financing-schedule?asOf=` returns the SAC or Price schedule (installment, interest, amortization and balance per month, due on the same day of each month, clamped to short months) and where the financing stands on `asOf`: paid and remaining installments, outstanding balance, total paid, total interest and the next installment. The nominal annual rate (percent) is split evenly into a monthly rate; rounding is per row and the last amortization absorbs the difference.
-- Not covered yet: photos and documents (they wait for the object storage), geocoding.
+- Not covered yet: geocoding (latitude and longitude stay empty).
 
 ### Feedback — `/api/feedback`
 
-Any signed-in user (guests included) can `POST /` a message (3 to 5000 characters) and `GET /` what they sent (`status`, `page`, `pageSize`). The attachment will come with the object storage.
+Any signed-in user (guests included) can `POST /` a message (3 to 5000 characters) and `GET /` what they sent (`status`, `page`, `pageSize`). An attachment is not supported yet.
 
 ### Platform admin — `/api/admin/*`
 
@@ -167,6 +167,29 @@ The owner panel. It needs the `admin` platform role (`users.role`, set in the da
 - **Each entry has** the actor (a snapshot of name, e-mail and role, so it stays readable after the user is deleted), the organization (`null` for platform-level events), the impersonator when there is one, the request (`method`, `path`, `status` in `details`), the address (from `x-forwarded-for` / `x-real-ip`, so run behind a proxy that sets it) and the browser.
 - **Writing never breaks the action**: a failure to write is logged and swallowed.
 - **Retention** is 12 months: the repository can purge older entries; the periodic job comes with the demo cleanup.
+
+### Photos — `/api/properties/:propertyId/photos`
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/` | the photos in order (position 0 is the cover) |
+| `POST` | `/` | multipart form, field `file`: JPEG, PNG or WebP; up to 30 photos per property; goes to the end of the list |
+| `PUT` | `/order` | `{ "photoIds": [...] }`: every photo of the property exactly once, in the wanted order |
+| `GET` | `/:id/content` | the image (inline), authenticated by the session cookie |
+| `DELETE` | `/:id` | removes the photo, its file record and its object |
+
+### Documents — `/api/properties/:propertyId/documents`
+
+`GET /` (optional `category`, case-insensitive), `POST /` (multipart: `file` plus an optional `category` of up to 50 characters; PDF, JPEG, PNG, WebP, DOCX or XLSX), `GET /:id/content` (always an `attachment`, never cached), `PATCH /:id` (`{ "category": string | null }`) and `DELETE /:id`.
+
+### Uploads and storage
+
+- **Drivers.** `STORAGE_DRIVER=local` keeps files in `STORAGE_DIR` (development); `s3` talks to any S3-compatible bucket (R2, B2, MinIO, AWS) with `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION` and `S3_FORCE_PATH_STYLE`. Switching is configuration only; the S3 driver is covered with a fake client, not against a live bucket.
+- **The database keeps the metadata, the storage keeps the bytes.** A file's key is generated (`<organization>/<uuid>.<ext>`): the name sent by the client never reaches the storage and is reduced to its last path segment.
+- **Checks.** The declared type must be allowed **and the bytes must start with that type's signature** (a script renamed `.png` is refused with `415`), empty files are `400`, and anything over `MAX_UPLOAD_MB` (default 15) is `413`, enforced on the request body too. Served files carry `X-Content-Type-Options: nosniff`.
+- **Order of writes.** The object is stored first; if the database then refuses, the object is taken back. On delete the rows go first and the object after; if the storage is unreachable the leftover is picked up by the sweep.
+- **Orphan sweep.** `sweepOrphanFiles` removes files that nothing points to (no photo, document, contract PDF or feedback attachment): what a deleted property leaves behind and what a failed delete could not reach. It only looks at files older than a cut-off, so an upload in flight is safe. A periodic job will run it with the demo cleanup.
+- Visibility follows the property: members only reach files of properties they created. Uploads and deletions are audited (`upload` / `delete` on `photo` and `document`).
 
 ### Agencies — `/api/agencies`
 
