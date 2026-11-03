@@ -154,6 +154,9 @@ export const listPropertiesQuerySchema = z.object({
   clientId: z.uuid().optional(),
 });
 
+/** Where to stand when summarizing the financing (`YYYY-MM-DD`); defaults to today. */
+export const financingScheduleQuerySchema = z.object({ asOf: date.optional() });
+
 export const propertyIdParamSchema = z.object({ id: z.uuid() });
 
 export type CreatePropertyInput = z.output<typeof createPropertySchema>;

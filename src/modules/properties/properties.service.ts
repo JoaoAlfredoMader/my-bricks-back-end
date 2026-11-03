@@ -1,8 +1,9 @@
 import type { AcquisitionType, PropertyType, RentalMode, UsageType } from "../../generated/prisma/enums.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import type { TenantScope } from "../../shared/http/tenant.js";
-import { numberToCents } from "../../shared/money.js";
-import { type Page, type PropertyDto, toPropertyDto } from "./properties.dto.js";
+import { centsToNumber, numberToCents } from "../../shared/money.js";
+import { type FinancingTerms, buildSchedule, summarize } from "./financing-schedule.js";
+import { type FinancingScheduleDto, type Page, type PropertyDto, toPropertyDto } from "./properties.dto.js";
 import type {
   AcquisitionData,
   AddressData,
@@ -27,6 +28,8 @@ export interface PropertiesService {
   create(tenant: TenantScope, input: CreatePropertyInput): Promise<PropertyDto>;
   update(tenant: TenantScope, id: string, input: UpdatePropertyInput): Promise<PropertyDto>;
   remove(tenant: TenantScope, id: string): Promise<void>;
+  /** Installments and balance of the property's financing; `asOf` defaults to today. */
+  financingSchedule(tenant: TenantScope, id: string, options: { asOf?: string | undefined }): Promise<FinancingScheduleDto>;
 }
 
 type FieldError = { path: string; message: string };
@@ -295,6 +298,31 @@ export function createPropertiesService(repository: PropertiesRepository): Prope
     async remove(tenant, id) {
       const deleted = await repository.delete(visibleScope(tenant), id);
       if (!deleted) throw AppError.notFound("Property not found");
+    },
+
+    async financingSchedule(tenant, id, { asOf = new Date().toISOString().slice(0, 10) }) {
+      const property = await repository.findById(visibleScope(tenant), id);
+      if (!property) throw AppError.notFound("Property not found");
+      const financing = property.acquisition?.financing;
+      if (!financing) throw AppError.notFound("The property has no financing");
+
+      const terms: FinancingTerms = {
+        financedAmountCents: centsToNumber(financing.financedAmountCents),
+        termMonths: financing.termMonths,
+        annualInterestRate: financing.annualInterestRate.toNumber(),
+        amortizationSystem: financing.amortizationSystem,
+        firstInstallmentOn: financing.firstInstallmentOn.toISOString().slice(0, 10),
+      };
+      const installments = buildSchedule(terms);
+      return {
+        asOf,
+        amortizationSystem: terms.amortizationSystem,
+        financedAmountCents: terms.financedAmountCents,
+        termMonths: terms.termMonths,
+        annualInterestRate: terms.annualInterestRate,
+        summary: summarize(installments, terms.financedAmountCents, asOf),
+        installments,
+      };
     },
   };
 }

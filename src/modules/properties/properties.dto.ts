@@ -8,6 +8,7 @@ import type {
   UsageType,
 } from "../../generated/prisma/enums.js";
 import { centsToNumber } from "../../shared/money.js";
+import type { FinancingSummary, Installment } from "./financing-schedule.js";
 import type { PropertyRecord } from "./properties.repository.js";
 import { derivePropertyStatus, type PropertyStatus } from "./property-status.js";
 
@@ -76,6 +77,17 @@ export interface PropertyDto {
   createdById: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** The financing of a property as of a date: where it stands and every installment. */
+export interface FinancingScheduleDto {
+  asOf: string;
+  amortizationSystem: AmortizationSystem;
+  financedAmountCents: number;
+  termMonths: number;
+  annualInterestRate: number;
+  summary: FinancingSummary;
+  installments: Installment[];
 }
 
 export interface Page<TItem> {
