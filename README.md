@@ -111,12 +111,13 @@ Read-only reference data for the forms (shared by every organization).
 
 ### KPIs — `/api/kpis`
 
-Read-only indicators, calculated on every request from the stored data (nothing is persisted). Both endpoints take `asOf` (`YYYY-MM-DD`, default today).
+Read-only indicators, calculated on every request from the stored data (nothing is persisted). `/portfolio` and `/properties/:id` take `asOf` (`YYYY-MM-DD`, default today); `/cash-flow` takes a window of months.
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/portfolio` | totals, counts by status and one row per property; optional `clientId` |
 | `GET` | `/properties/:id` | the same indicators for one property |
+| `GET` | `/cash-flow` | revenue and expenses month by month: `from`, `to` (`YYYY-MM`, required, up to 36 months), optional `propertyId` |
 
 Yields, cap rate and IRR are fractions (`0.07` = 7%); money is integer cents.
 
@@ -125,6 +126,37 @@ Yields, cap rate and IRR are fractions (`0.07` = 7%); money is integer cents.
 - **Own use and loan for use** produce no income: they have no revenue or yields and stay out of the portfolio income, but their expenses are still reported and their value counts in the total patrimony.
 - **Portfolio** totals are weighted by the ownership share. Yield and cap rate only use properties that have a value, on both sides of the division, so a property without a value cannot skew them.
 - **IRR** is built from the monthly cash flow from the acquisition month to the `asOf` month: the acquisition cost goes out at month 0, each following month brings the operating result (current revenue − expenses, held constant), transactions land in the month they occur (recurring ones in every month until they end) and the estimated value comes back at the end. The monthly rate is found by bisection and annualized `(1 + r)^12 − 1`. It is `null` with a reason (`no_acquisition_date`, `no_acquisition_cost`, `no_estimated_value`, `period_too_short`, `no_solution`) when it cannot be computed. The acquisition (date and cost) is set on the property.
+
+#### Monthly cash flow — `GET /api/kpis/cash-flow`
+
+One item per month from `from` to `to` (both included; months with nothing come back as zeros), in integer cents:
+
+```json
+{
+  "from": "2026-01",
+  "to": "2026-12",
+  "months": [
+    {
+      "month": "2026-01",
+      "revenue": { "rentCents": 0, "reservationsCents": 0, "transactionsCents": 0, "totalCents": 0 },
+      "expenses": { "fixedCents": 0, "transactionsCents": 0, "totalCents": 0 },
+      "netCents": 0
+    }
+  ],
+  "totals": { "revenueCents": 0, "expensesCents": 0, "netCents": 0 }
+}
+```
+
+A recurring transaction is a single record, so the API is what expands it into months (the client does no accounting). Invalid input answers `400` with the error on the field: a `from`/`to` that is not `YYYY-MM`, `to` before `from`, or more than 36 months (the error is on `to`). A `propertyId` outside what the caller may see answers `404`, like the other endpoints.
+
+- **`rentCents`** is the rent in force in the month, chosen as the KPIs choose it: the rent typed on the property in manual mode; in contract mode, the conventional contract in force (cancelled contracts never count). A contract belongs to the months from the one it starts in to the one it ends in, both included (the same by-month reading as the end of a recurring transaction); a replacement wins the month it starts, so a month is never counted twice, and a contract ended without a date stops in the month it was ended. Like the annual revenue of the KPIs, the rent is multiplied by the **expected occupancy rate** (a 90% occupancy gives 90% of the rent every month).
+- **`reservationsCents`** (short-stay properties, which earn from bookings instead of rent, as in the KPIs): the confirmed reservations whose **check-in** is in the month, **in full**. They are not spread over the nights, so a stay that crosses two months counts entirely in the first one; this is the criterion the KPIs already use (check-in inside the window), and the occupancy rate does not apply to them.
+- **`transactionsCents`** (revenue and expenses, each in its own group): one-off transactions in the month they occurred; recurring ones in every month from the first until the month of the end, inclusive, or without end. It is the same rule as the transactions period filter and the IRR cash flow. The category decides revenue vs expense.
+- **`fixedCents`** (expenses): the annual expenses of the property divided by 12, the same amount every month (rounded to the cent, so twelve months can differ from the annual figure by a few cents).
+- **Own use and loan for use** have no rent or bookings (no income, as in the KPIs), but their fixed expenses and transactions still count.
+- **Ownership.** Without `propertyId`, the amounts of each property are weighted by its `ownershipPercentage` before being added, like `/portfolio`. With `propertyId`, the values are those of the whole property, like `/properties/:id`. Members only see the properties they created.
+- **Rounding.** Amounts are added unrounded and rounded once per line and month; every total is exactly the sum of its rounded parts and `totals` is the sum of the months.
+- **Financing.** The financing schedule (`/api/properties/:id/financing-schedule`) is **not** added to the cash flow. The installments the owner pays are expected to be recorded as transactions (category "Parcela de financiamento"), so adding the schedule as well would count them twice. Record them as a recurring transaction to have them here.
 
 ### Transactions — `/api/transactions`
 
@@ -302,7 +334,7 @@ npm run test:watch  # re-run on change
 ```
 
 - **Isolated database.** Tests run against `<database>_test` on the same server (created, migrated and seeded automatically before the run), never against the development database. The helpers refuse to truncate anything whose name does not end in `_test`.
-- **`tests/unit`**: pure logic with no database (the KPI calculations).
+- **`tests/unit`**: pure logic with no database (the KPI calculations and the monthly cash flow).
 - **`tests/api`**: the real app wired against the test database and called in-process, one file per module. Each file tells one scenario in order (sign-ups, then creation, validation, listing, editing, visibility of members, isolation between organizations, deletion), so run a file as a whole rather than a single test. Checks inside a test are soft: a run reports every broken expectation, each with its name and the response that broke it.
 - Better Auth skips its own origin check when `NODE_ENV=test`, so only the app-level CORS is covered.
 
