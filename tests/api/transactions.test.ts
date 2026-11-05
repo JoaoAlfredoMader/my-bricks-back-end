@@ -91,14 +91,57 @@ describe("Transactions API", () => {
     check("filter by type=expense", (await ana.session.call("GET", "/api/transactions?type=expense")).json?.total === 3);
     check("filter recurring", (await ana.session.call("GET", "/api/transactions?isRecurring=true")).json?.total === 3);
     check("filter not recurring", (await ana.session.call("GET", "/api/transactions?isRecurring=false")).json?.total === 1);
-    check("date bounds are inclusive", (await ana.session.call("GET", "/api/transactions?from=2026-02-01&to=2026-05-10")).json?.total === 3);
-    check("date window with nothing in it", (await ana.session.call("GET", "/api/transactions?from=2027-01-01")).json?.total === 0);
+    check("date bounds are inclusive (the open-ended recurrence from January is still running)", (await ana.session.call("GET", "/api/transactions?from=2026-02-01&to=2026-05-10")).json?.total === 4);
+    check("date window after everything: only the open-ended recurrence remains", (await ana.session.call("GET", "/api/transactions?from=2027-01-01")).json?.total === 1);
     const paged = await ana.session.call("GET", "/api/transactions?page=2&pageSize=3");
     check("pagination", paged.json?.items?.length === 1 && paged.json.total === 4 && paged.json.page === 2, paged.json);
     check("pageSize above the cap -> 400", (await ana.session.call("GET", "/api/transactions?pageSize=500")).status === 400);
     check("invalid type filter -> 400", (await ana.session.call("GET", "/api/transactions?type=gift")).status === 400);
     check("get by id", (await ana.session.call("GET", `/api/transactions/${t1.id}`)).json?.id === t1.id);
     check("unknown id -> 404", (await ana.session.call("GET", "/api/transactions/00000000-0000-4000-8000-000000000000")).status === 404);
+  });
+
+  it("period filter keeps the recurring transactions whose occurrences touch the period", async () => {
+    // Data: t1 one-off 2026-05-10 | open recurring from 2026-01-05, no end | ending recurring 2026-02-01..2026-06-01 | sameDayEnd recurring 2026-02-01..2026-02-01
+    const ids = async (query: string) => {
+      const r = await ana.session.call("GET", `/api/transactions?${query}`);
+      return { total: r.json?.total as number, ids: (r.json?.items ?? []).map((i: any) => i.id) as string[] };
+    };
+    const sameDay = sameDayEnd.json.id as string;
+
+    const secondHalf = await ids("from=2026-07-01&to=2026-12-31");
+    check("recurring that started before the window and has no end appears; the ones that ended before it, and the one-off, do not", secondHalf.total === 1 && secondHalf.ids[0] === open.json.id, secondHalf);
+
+    const endsInside = await ids("from=2026-03-01&to=2026-03-31");
+    check("recurring that ends after the window starts appears; the one that ended in February does not", endsInside.total === 2 && endsInside.ids.includes(ending.json.id) && endsInside.ids.includes(open.json.id) && !endsInside.ids.includes(sameDay), endsInside);
+
+    const endMonth = await ids("from=2026-06-20&to=2026-06-30");
+    check("the end counts by month, inclusive: ending 2026-06-01 still reaches a window starting on 2026-06-20", endMonth.ids.includes(ending.json.id) && endMonth.total === 2, endMonth);
+    const afterEndMonth = await ids("from=2026-07-01&to=2026-07-31");
+    check("...and no longer reaches July", !afterEndMonth.ids.includes(ending.json.id), afterEndMonth);
+
+    const monthOfEnd = await ids("from=2026-02-15&to=2026-02-28");
+    check("a window inside the only month of a one-month recurrence still finds it", monthOfEnd.ids.includes(sameDay), monthOfEnd);
+
+    const beforeStart = await ids("to=2026-01-31");
+    check("only `to`: recurring that starts after it is out, the one running by then is in", beforeStart.total === 1 && beforeStart.ids[0] === open.json.id, beforeStart);
+    check("window before everything is empty", (await ids("from=2025-01-01&to=2025-12-31")).total === 0);
+
+    const oneOffs = await ids("from=2026-05-11&to=2026-05-31");
+    check("one-off transactions keep the plain date rule: the 2026-05-10 sale is out of a window starting on the 11th", !oneOffs.ids.includes(t1.id), oneOffs);
+    const year = await ana.session.call("GET", "/api/transactions?from=2026-01-01&to=2026-12-31");
+    check("a whole year: all 4, still latest first", year.json?.total === 4 && year.json.items.map((i: any) => i.occurredOn).join() === "2026-05-10,2026-02-01,2026-02-01,2026-01-05", year.json?.items?.map((i: any) => i.occurredOn));
+    const oneOffOnly = await ids("from=2026-01-01&to=2026-12-31&isRecurring=false");
+    check("combines with the other filters", oneOffOnly.total === 1 && oneOffOnly.ids[0] === t1.id, oneOffOnly);
+    const revenueOnly = await ids("from=2026-07-01&to=2026-12-31&type=revenue");
+    check("combines with the type filter", revenueOnly.total === 0, revenueOnly);
+    const paged = await ana.session.call("GET", "/api/transactions?from=2026-01-01&to=2026-12-31&page=2&pageSize=3");
+    check("pagination counts the matching recurring too", paged.json?.total === 4 && paged.json.items.length === 1, paged.json);
+
+    const old = await ana.session.call("POST", "/api/transactions", { propertyId: apto, categoryId: financing.id, amountCents: 100, occurredOn: "2021-03-10", isRecurring: true });
+    const thisYear = await ids("from=2026-01-01&to=2026-12-31");
+    check("a monthly charge that started in 2021 and never ended shows up in this year", thisYear.ids.includes(old.json.id) && thisYear.total === 5, thisYear);
+    await ana.session.call("DELETE", `/api/transactions/${old.json.id}`);
   });
 
   it("patch", async () => {
