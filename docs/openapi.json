@@ -4040,7 +4040,7 @@
           "Transactions"
         ],
         "summary": "List transactions",
-        "description": "One-off or monthly-recurring revenues and expenses that are not rent.",
+        "description": "One-off or monthly-recurring revenues and expenses that are not rent. With `from` / `to`, recurring transactions are kept when their monthly occurrences touch the period (the end date counts by month, inclusive), not only when `occurredOn` is inside it.",
         "security": [
           {
             "sessionCookie": []
@@ -4114,6 +4114,7 @@
             "name": "from",
             "in": "query",
             "required": false,
+            "description": "Start of the period (YYYY-MM-DD, inclusive). Together with `to` it keeps one-off transactions whose `occurredOn` is inside the period, and recurring ones whose monthly occurrences touch it: they started on or before `to` and have no end date or end in the month of `from` or later (the end counts by month, inclusive, as in the IRR).",
             "schema": {
               "type": "string",
               "format": "date",
@@ -4124,6 +4125,7 @@
             "name": "to",
             "in": "query",
             "required": false,
+            "description": "End of the period (YYYY-MM-DD, inclusive). See `from`.",
             "schema": {
               "type": "string",
               "format": "date",

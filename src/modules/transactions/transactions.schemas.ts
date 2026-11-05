@@ -55,8 +55,12 @@ export const listTransactionsQuerySchema = z.object({
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .optional(),
-  from: date.optional(),
-  to: date.optional(),
+  from: date
+    .optional()
+    .describe(
+      "Start of the period (YYYY-MM-DD, inclusive). Together with `to` it keeps one-off transactions whose `occurredOn` is inside the period, and recurring ones whose monthly occurrences touch it: they started on or before `to` and have no end date or end in the month of `from` or later (the end counts by month, inclusive, as in the IRR).",
+    ),
+  to: date.optional().describe("End of the period (YYYY-MM-DD, inclusive). See `from`."),
 });
 
 export const transactionIdParamSchema = z.object({ id: z.uuid() });
