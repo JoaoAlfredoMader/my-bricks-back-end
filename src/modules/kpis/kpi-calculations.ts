@@ -240,3 +240,191 @@ export function computeIrr(input: IrrInput): IrrResult {
 
   return { annualRate: round6(Math.pow(1 + monthly, 12) - 1), unavailableReason: null, months };
 }
+
+// ── Monthly cash flow ───────────────────────────────────────────────────────
+
+/** A calendar month as `YYYY-MM`. */
+export type MonthKey = string;
+
+/** Longest window the monthly cash flow answers for. */
+export const MAX_CASH_FLOW_MONTHS = 36;
+
+const monthKeyToIndex = (month: MonthKey) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+const indexToMonthKey = (index: number): MonthKey =>
+  `${String(Math.floor(index / 12)).padStart(4, "0")}-${String((index % 12) + 1).padStart(2, "0")}`;
+
+/** Number of months from `from` to `to`, both included. Zero or negative when `to` is before `from`. */
+export function countMonths(from: MonthKey, to: MonthKey): number {
+  return monthKeyToIndex(to) - monthKeyToIndex(from) + 1;
+}
+
+/** Every month from `from` to `to`, both included, in order. */
+export function monthRange(from: MonthKey, to: MonthKey): MonthKey[] {
+  const start = monthKeyToIndex(from);
+  return Array.from({ length: Math.max(countMonths(from, to), 0) }, (_, offset) => indexToMonthKey(start + offset));
+}
+
+/**
+ * Whether a transaction lands in the month. A one-off one lands in the month of `occurredOn`; a
+ * recurring one in every month from the month of `occurredOn` until the month of `recurrenceEndsOn`
+ * (inclusive), or without end when it has none. This is the same reading the IRR cash flow uses.
+ */
+export function transactionOccursIn(transaction: IrrTransaction, month: MonthKey): boolean {
+  const target = monthKeyToIndex(month);
+  const first = monthIndex(transaction.occurredOn);
+  if (!transaction.isRecurring) return first === target;
+  if (target < first) return false;
+  return transaction.recurrenceEndsOn === null || target <= monthIndex(transaction.recurrenceEndsOn);
+}
+
+/** A stretch of a conventional contract's rent. Dates are `YYYY-MM-DD`; the end is `null` while it runs. */
+export interface CashFlowRentPeriod {
+  monthlyCents: number;
+  startsOn: string;
+  endsOn: string | null;
+}
+
+/** Where a property's income comes from, month by month. Mirrors how the KPIs choose the rent. */
+export type CashFlowRevenue =
+  | { kind: "none" }
+  /** The rent typed on the property: expected income, so the occupancy rate applies. */
+  | { kind: "manual"; monthlyCents: number }
+  /** Conventional contracts: expected income, so the occupancy rate applies. */
+  | { kind: "contracts"; periods: readonly CashFlowRentPeriod[] }
+  /** Confirmed bookings: income already realized, so the occupancy rate does not apply. */
+  | { kind: "reservations"; reservations: ReadonlyArray<{ checkIn: string; totalCents: number }> };
+
+export interface PropertyCashFlowInput {
+  usageType: UsageType;
+  /** Expected occupancy, 0-100. */
+  occupancyRate: number;
+  annualExpensesCents: number;
+  revenue: CashFlowRevenue;
+  transactions: readonly IrrTransaction[];
+}
+
+export interface CashFlowMonth {
+  month: MonthKey;
+  revenue: { rentCents: number; reservationsCents: number; transactionsCents: number; totalCents: number };
+  expenses: { fixedCents: number; transactionsCents: number; totalCents: number };
+  netCents: number;
+}
+
+export interface CashFlow {
+  from: MonthKey;
+  to: MonthKey;
+  months: CashFlowMonth[];
+  totals: { revenueCents: number; expensesCents: number; netCents: number };
+}
+
+/** Unrounded amounts of one property in one month. */
+interface PropertyMonth {
+  rent: number;
+  reservations: number;
+  revenueTransactions: number;
+  fixed: number;
+  expenseTransactions: number;
+}
+
+/**
+ * The rent a contract-mode property earns in a month: the contract in force that month, where a
+ * month belongs to a contract from the month it starts to the month it ends, both included (the
+ * same by-month reading as the end of a recurring transaction). When a replacement starts in the
+ * month the previous contract ended, the one that started last wins, so the month is never counted twice.
+ */
+function contractRentIn(periods: readonly CashFlowRentPeriod[], month: MonthKey): number {
+  const target = monthKeyToIndex(month);
+  let winner: CashFlowRentPeriod | null = null;
+  for (const period of periods) {
+    const covers = monthIndex(period.startsOn) <= target && (period.endsOn === null || target <= monthIndex(period.endsOn));
+    if (covers && (winner === null || period.startsOn > winner.startsOn)) winner = period;
+  }
+  return winner?.monthlyCents ?? 0;
+}
+
+function propertyMonth(input: PropertyCashFlowInput, month: MonthKey): PropertyMonth {
+  const producesIncome = isIncomeProducing(input.usageType);
+  const expected = input.occupancyRate / 100;
+
+  let rent = 0;
+  let reservations = 0;
+  if (producesIncome) {
+    switch (input.revenue.kind) {
+      case "manual":
+        rent = input.revenue.monthlyCents * expected;
+        break;
+      case "contracts":
+        rent = contractRentIn(input.revenue.periods, month) * expected;
+        break;
+      case "reservations":
+        reservations = input.revenue.reservations
+          .filter((reservation) => reservation.checkIn.slice(0, 7) === month)
+          .reduce((sum, reservation) => sum + reservation.totalCents, 0);
+        break;
+      case "none":
+        break;
+    }
+  }
+
+  let revenueTransactions = 0;
+  let expenseTransactions = 0;
+  for (const transaction of input.transactions) {
+    if (!transactionOccursIn(transaction, month)) continue;
+    if (transaction.signedAmountCents >= 0) revenueTransactions += transaction.signedAmountCents;
+    else expenseTransactions += -transaction.signedAmountCents;
+  }
+
+  return { rent, reservations, revenueTransactions, fixed: input.annualExpensesCents / 12, expenseTransactions };
+}
+
+/**
+ * Month-by-month revenue and expenses of a set of properties, for the months from `from` to `to`
+ * (both included, empty months come out as zeros).
+ *
+ * - Rent: see `CashFlowRevenue`. Own use and loan for use produce no income, so they have no rent or
+ *   bookings, but their fixed expenses and transactions still count (as in the portfolio KPIs).
+ * - Bookings land in the month of the check-in.
+ * - Fixed expenses are the annual expenses divided by 12, every month.
+ * - Every amount of a property is weighted by its `share` (0-100, the ownership percentage) before
+ *   properties are added, like the portfolio totals. Pass 100 to get the property as a whole.
+ * - Amounts are added unrounded and rounded once per line and month, and each total is the sum of
+ *   the rounded lines, so every figure in the answer adds up exactly.
+ */
+export function computeCashFlow(input: {
+  from: MonthKey;
+  to: MonthKey;
+  properties: ReadonlyArray<PropertyCashFlowInput & { share: number }>;
+}): CashFlow {
+  const months = monthRange(input.from, input.to).map((month): CashFlowMonth => {
+    const sum: PropertyMonth = { rent: 0, reservations: 0, revenueTransactions: 0, fixed: 0, expenseTransactions: 0 };
+    for (const property of input.properties) {
+      const amounts = propertyMonth(property, month);
+      const weight = property.share / 100;
+      sum.rent += amounts.rent * weight;
+      sum.reservations += amounts.reservations * weight;
+      sum.revenueTransactions += amounts.revenueTransactions * weight;
+      sum.fixed += amounts.fixed * weight;
+      sum.expenseTransactions += amounts.expenseTransactions * weight;
+    }
+
+    const revenue = {
+      rentCents: Math.round(sum.rent),
+      reservationsCents: Math.round(sum.reservations),
+      transactionsCents: Math.round(sum.revenueTransactions),
+    };
+    const expenses = { fixedCents: Math.round(sum.fixed), transactionsCents: Math.round(sum.expenseTransactions) };
+    const revenueTotal = revenue.rentCents + revenue.reservationsCents + revenue.transactionsCents;
+    const expensesTotal = expenses.fixedCents + expenses.transactionsCents;
+
+    return {
+      month,
+      revenue: { ...revenue, totalCents: revenueTotal },
+      expenses: { ...expenses, totalCents: expensesTotal },
+      netCents: revenueTotal - expensesTotal,
+    };
+  });
+
+  const revenueCents = months.reduce((total, month) => total + month.revenue.totalCents, 0);
+  const expensesCents = months.reduce((total, month) => total + month.expenses.totalCents, 0);
+  return { from: input.from, to: input.to, months, totals: { revenueCents, expensesCents, netCents: revenueCents - expensesCents } };
+}
