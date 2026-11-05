@@ -132,7 +132,7 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/` | `propertyId`, `categoryId`, `type` (`revenue` \| `expense`), `isRecurring`, `from` / `to` (inclusive, on `occurredOn`), `page`, `pageSize`; latest first |
+| `GET` | `/` | `propertyId`, `categoryId`, `type` (`revenue` \| `expense`), `isRecurring`, `from` / `to` (inclusive period, see below), `page`, `pageSize`; latest first |
 | `POST` | `/` | `propertyId`, `categoryId`, `amountCents` (> 0), `occurredOn`, `description`, `isRecurring`, `recurrenceEndsOn` |
 | `GET` | `/:id` | |
 | `PATCH` | `/:id` | any subset except the property |
@@ -140,6 +140,7 @@ One-off or monthly-recurring revenues and expenses of a property that are not re
 
 - The **category decides revenue vs expense** (`GET /api/lookups/transaction-categories`); the amount is always positive and `type` is derived from the category in every response.
 - A recurring transaction repeats every month from `occurredOn` until `recurrenceEndsOn` (`null` = still running). An end date only makes sense on a recurring transaction and cannot be before the first occurrence. Turning recurrence off on a `PATCH` drops the end date.
+- **Period filter (`from` / `to`).** A one-off transaction is kept when its `occurredOn` is inside the period. A recurring one is a single record that stands for a charge every month, so it is kept when its run touches the period: it started on or before `to` and it has no end or ends in the month of `from` or later. The end counts **by month, inclusive** (an end date on any day of the month of `from` still reaches it), which is the same reading the IRR cash flow and the monthly cash flow (`/api/kpis/cash-flow`) use. A monthly charge that began in 2021 and never ended therefore shows up in "this year". Ordering (`occurredOn` desc) and pagination do not change; the other filters combine with the period.
 
 ### Properties — `/api/properties`
 
