@@ -178,4 +178,98 @@ describe("KPIs API", () => {
     const carlosPortfolio = (await carlos.session.call("GET", `/api/kpis/portfolio?asOf=${AS_OF}`)).json;
     check("empty portfolio: zeros and null rates", carlosPortfolio?.propertyCount === 0 && carlosPortfolio.totals.totalValueCents === 0 && carlosPortfolio.totals.capRate === null && carlosPortfolio.totals.grossYield === null, carlosPortfolio);
   });
+  it("cash flow: validation", async () => {
+    const get = (who: typeof ana, query: string) => who.session.call("GET", `/api/kpis/cash-flow?${query}`);
+    const bad = async (name: string, query: string, path: string) => {
+      const r = await get(ana, query);
+      check(name, r.status === 400 && r.json?.error?.code === "VALIDATION_ERROR" && r.json.error.details.some((d: any) => d.path === path), r);
+    };
+
+    check("cash flow without session -> 401", (await new Session().call("GET", "/api/kpis/cash-flow?from=2026-01&to=2026-03")).status === 401);
+    await bad("missing from -> 400 on from", "to=2026-03", "from");
+    await bad("missing to -> 400 on to", "from=2026-01", "to");
+    await bad("a day instead of a month -> 400 on from", "from=2026-01-01&to=2026-03", "from");
+    await bad("month 13 -> 400 on from", "from=2026-13&to=2026-14", "from");
+    await bad("month 00 -> 400 on to", "from=2026-01&to=2026-00", "to");
+    await bad("a month without the leading zero -> 400", "from=2026-1&to=2026-3", "from");
+    await bad("from after to -> 400 on to", "from=2026-05&to=2026-04", "to");
+    await bad("37 months -> 400 on to", "from=2024-01&to=2027-01", "to");
+    await bad("non-uuid propertyId -> 400 on propertyId", "from=2026-01&to=2026-03&propertyId=xyz", "propertyId");
+
+    const longest = await get(ana, "from=2024-01&to=2026-12");
+    check("36 months is the limit and is accepted", longest.status === 200 && longest.json?.months?.length === 36 && longest.json.months[0].month === "2024-01" && longest.json.months[35].month === "2026-12", longest.json?.months?.length);
+    const single = await get(ana, "from=2026-05&to=2026-05");
+    check("a single month is a valid window", single.status === 200 && single.json?.months?.length === 1 && single.json.from === "2026-05" && single.json.to === "2026-05", single);
+  });
+
+  it("cash flow: one property, with recurring transactions", async () => {
+    const get = (who: typeof ana, query: string) => who.session.call("GET", `/api/kpis/cash-flow?${query}`);
+    const categories = (await ana.session.call("GET", "/api/lookups/transaction-categories")).json;
+    const financing = categories.find((c: any) => c.name === "Parcela de financiamento").id;
+    const sale = categories.find((c: any) => c.name === "Indenização").id;
+    // P1 already has a 1,000,000 expense on 2025-12-01 and a 3,000,000 revenue on 2026-02-10 (see the IRR test).
+    await ana.session.call("POST", "/api/transactions", { propertyId: p1, categoryId: financing, amountCents: 40_000, occurredOn: "2025-11-05", isRecurring: true });
+    await ana.session.call("POST", "/api/transactions", { propertyId: p1, categoryId: sale, amountCents: 5_000, occurredOn: "2026-01-15", isRecurring: true, recurrenceEndsOn: "2026-02-28" });
+
+    const flow = (await get(ana, `from=2026-01&to=2026-03&propertyId=${p1}`)).json;
+    const [jan, feb, mar] = flow?.months ?? [];
+    check("the answer has the documented shape", flow && JSON.stringify(Object.keys(flow)) === '["from","to","months","totals"]' && JSON.stringify(Object.keys(jan)) === '["month","revenue","expenses","netCents"]' && JSON.stringify(Object.keys(jan.revenue)) === '["rentCents","reservationsCents","transactionsCents","totalCents"]' && JSON.stringify(Object.keys(jan.expenses)) === '["fixedCents","transactionsCents","totalCents"]', flow);
+    check("one item per month, in order", flow?.months?.map((m: any) => m.month).join() === "2026-01,2026-02,2026-03");
+    check("rent: the typed rent times the 90% occupancy, every month", [jan, feb, mar].every((m) => m?.revenue.rentCents === 270_000 && m.revenue.reservationsCents === 0), flow?.months);
+    check("fixed expenses: the annual 600,000 divided by 12", [jan, feb, mar].every((m) => m?.expenses.fixedCents === 50_000));
+    check("January: the recurring revenue that starts on the 15th and the open-ended recurring expense", jan?.revenue.transactionsCents === 5_000 && jan.expenses.transactionsCents === 40_000 && jan.revenue.totalCents === 275_000 && jan.expenses.totalCents === 90_000 && jan.netCents === 185_000, jan);
+    check("February: the one-off revenue and the recurring one that ends in this month", feb?.revenue.transactionsCents === 3_005_000 && feb.expenses.transactionsCents === 40_000 && feb.netCents === 3_185_000, feb);
+    check("March: the recurring revenue is over, the expense keeps going, the one-off is not repeated", mar?.revenue.transactionsCents === 0 && mar.expenses.transactionsCents === 40_000 && mar.netCents === 180_000, mar);
+    check("totals", flow?.totals?.revenueCents === 3_820_000 && flow.totals.expensesCents === 270_000 && flow.totals.netCents === 3_550_000, flow?.totals);
+
+    const december = (await get(ana, `from=2025-12&to=2025-12&propertyId=${p1}`)).json?.months?.[0];
+    check("a recurring expense that started before the window and the one-off of that month", december?.expenses.transactionsCents === 1_040_000 && december.expenses.totalCents === 1_090_000 && december.revenue.totalCents === 270_000 && december.netCents === -820_000, december);
+    const before = (await get(ana, `from=2025-10&to=2025-10&propertyId=${p1}`)).json?.months?.[0];
+    check("before anything started, only rent and the fixed expenses", before?.expenses.transactionsCents === 0 && before.revenue.transactionsCents === 0 && before.netCents === 220_000, before);
+  });
+
+  it("cash flow: contract rent, bookings, ownership share and non-income properties", async () => {
+    const get = (who: typeof ana, query: string) => who.session.call("GET", `/api/kpis/cash-flow?${query}`);
+
+    const p2Flow = (await get(ana, `from=2026-01&to=2026-02&propertyId=${p2}`)).json;
+    check("contract mode: the contract rent, the expected occupancy of 100%, the whole property despite the 50% share", p2Flow?.months?.every((m: any) => m.revenue.rentCents === 500_000 && m.expenses.totalCents === 0 && m.netCents === 500_000), p2Flow?.months);
+
+    const stay = (await get(ana, `from=2025-12&to=2026-02&propertyId=${p3}`)).json;
+    check("short stay: the confirmed bookings land in the month of the check-in, in full; the cancelled one does not count", stay?.months?.[0]?.revenue.reservationsCents === 180_000 && stay.months[1].revenue.reservationsCents === 0 && stay.months[2].revenue.reservationsCents === 0, stay?.months?.map((m: any) => m.revenue));
+    check("short stay: no rent; fixed expenses are the annual 100,000 / 12 rounded", stay?.months?.every((m: any) => m.revenue.rentCents === 0 && m.expenses.fixedCents === 8_333) && stay.months[0].netCents === 171_667, stay?.months?.[0]);
+    const july = (await get(ana, `from=2026-07&to=2026-07&propertyId=${p3}`)).json;
+    check("a booking after the as-of date is still a cash flow of its own month", july?.months?.[0]?.revenue.reservationsCents === 999_999, july);
+    const august = (await get(ana, `from=2025-08&to=2025-08&propertyId=${p3}`)).json;
+    check("a booking from last year", august?.months?.[0]?.revenue.reservationsCents === 120_000, august);
+
+    const own = (await get(ana, `from=2026-01&to=2026-01&propertyId=${p4}`)).json?.months?.[0];
+    check("own use: no income, the fixed expenses remain", own?.revenue.totalCents === 0 && own.expenses.fixedCents === 4_167 && own.netCents === -4_167, own);
+    const vacant = (await get(ana, `from=2026-01&to=2026-01&propertyId=${p6}`)).json?.months?.[0];
+    check("vacant property: nothing", vacant?.revenue.totalCents === 0 && vacant.expenses.totalCents === 0 && vacant.netCents === 0, vacant);
+
+    // Portfolio of January 2026, weighted by share: P1 (100%), P2 (50%), P3 (100%), P4, P5, P6 and Bia's property.
+    const portfolio = (await get(ana, "from=2026-01&to=2026-03")).json;
+    const jan = portfolio?.months?.[0];
+    check("portfolio rent: P1 270,000 + P2 500,000 x 50% + P5 90,000 + Bia 45,000", jan?.revenue.rentCents === 270_000 + 250_000 + 90_000 + 45_000, jan);
+    check("portfolio revenue transactions and bookings", jan?.revenue.transactionsCents === 5_000 && jan.revenue.reservationsCents === 0 && jan.revenue.totalCents === 660_000, jan);
+    check("portfolio expenses: fixed P1 50,000 + P3 8,333 + P4 4,167 (own use counts), plus the financing transaction", jan?.expenses.fixedCents === 62_500 && jan.expenses.transactionsCents === 40_000 && jan.expenses.totalCents === 102_500 && jan.netCents === 557_500, jan);
+    check("portfolio totals are the sum of the months", portfolio?.totals?.revenueCents === portfolio.months.reduce((t: number, m: any) => t + m.revenue.totalCents, 0) && portfolio.totals.expensesCents === portfolio.months.reduce((t: number, m: any) => t + m.expenses.totalCents, 0) && portfolio.totals.netCents === portfolio.totals.revenueCents - portfolio.totals.expensesCents, portfolio?.totals);
+    check("the weighting is the same as the portfolio KPIs: the rent line of P2 is half of its own value", jan?.revenue.rentCents - (await get(ana, `from=2026-01&to=2026-01&propertyId=${p2}`)).json.months[0].revenue.rentCents / 2 === 270_000 + 90_000 + 45_000);
+  });
+
+  it("cash flow: visibility and isolation", async () => {
+    const get = (who: typeof ana, query: string) => who.session.call("GET", `/api/kpis/cash-flow?${query}`);
+
+    const mine = (await get(bia, "from=2026-01&to=2026-02")).json;
+    check("a member only sees the properties she created", mine?.months?.length === 2 && mine.months[0].revenue.rentCents === 45_000 && mine.months[0].expenses.totalCents === 0 && mine.totals.netCents === 90_000, mine);
+    check("a member asking for another member's property -> 404", (await get(bia, `from=2026-01&to=2026-02&propertyId=${p1}`)).status === 404);
+    check("a member can ask for her own property", (await get(bia, `from=2026-01&to=2026-02&propertyId=${biaProp}`)).status === 200);
+    check("the owner can ask for the member's property", (await get(ana, `from=2026-01&to=2026-02&propertyId=${biaProp}`)).status === 200);
+    check("another organization's property -> 404", (await get(carlos, `from=2026-01&to=2026-02&propertyId=${p1}`)).status === 404);
+    check("an unknown property -> 404", (await get(ana, "from=2026-01&to=2026-02&propertyId=00000000-0000-4000-8000-000000000000")).status === 404);
+
+    const empty = (await get(carlos, "from=2026-01&to=2026-12")).json;
+    check("an empty portfolio still answers every month, all zeros", empty?.months?.length === 12 && empty.months.every((m: any) => m.revenue.totalCents === 0 && m.expenses.totalCents === 0 && m.netCents === 0) && empty.totals.netCents === 0, empty?.totals);
+  });
+
 });

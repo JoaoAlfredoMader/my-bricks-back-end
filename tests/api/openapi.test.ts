@@ -257,6 +257,11 @@ describe("The API answers what the document promises", () => {
     const portfolio = await api(guest, "GET", "/api/kpis/portfolio");
     await api(guest, "GET", `/api/kpis/properties/${centro.id}`);
     check("the portfolio indicators cover every property", portfolio.json?.propertyCount === 10, portfolio.json?.propertyCount);
+    const cashFlow = await api(guest, "GET", "/api/kpis/cash-flow?from=2026-01&to=2026-12");
+    check("the monthly cash flow has one item per month", cashFlow.json?.months?.length === 12, cashFlow.json?.months?.length);
+    await api(guest, "GET", `/api/kpis/cash-flow?from=2026-01&to=2026-03&propertyId=${centro.id}`);
+    check("a window of more than 36 months is a documented 400", (await api(guest, "GET", "/api/kpis/cash-flow?from=2020-01&to=2026-12")).status === 400);
+    check("a property outside the caller's reach is a documented 404", (await api(guest, "GET", `/api/kpis/cash-flow?from=2026-01&to=2026-03&propertyId=${UNKNOWN}`)).status === 404);
   });
 
   it("contracts, occupants and the template", async () => {
