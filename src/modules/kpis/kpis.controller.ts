@@ -1,6 +1,6 @@
 import type { TenantScope } from "../../shared/http/tenant.js";
-import type { PortfolioKpisDto, PropertyKpisDto } from "./kpis.dto.js";
-import type { KpisService } from "./kpis.service.js";
+import type { CashFlowDto, PortfolioKpisDto, PropertyKpisDto } from "./kpis.dto.js";
+import type { CashFlowInput, KpisService } from "./kpis.service.js";
 
 export interface HttpResult<TBody> {
   status: 200;
@@ -13,6 +13,7 @@ export interface KpisController {
     tenant: TenantScope,
     options: { asOf?: string | undefined; clientId?: string | undefined },
   ): Promise<HttpResult<PortfolioKpisDto>>;
+  cashFlow(tenant: TenantScope, input: CashFlowInput): Promise<HttpResult<CashFlowDto>>;
 }
 
 /** Controller layer: receives validated input, calls the service, maps to status + DTO. */
@@ -23,6 +24,9 @@ export function createKpisController(service: KpisService): KpisController {
     },
     async portfolio(tenant, options) {
       return { status: 200, body: await service.portfolio(tenant, options) };
+    },
+    async cashFlow(tenant, input) {
+      return { status: 200, body: await service.cashFlow(tenant, input) };
     },
   };
 }

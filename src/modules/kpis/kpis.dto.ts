@@ -1,5 +1,5 @@
 import type { UsageType } from "../../generated/prisma/enums.js";
-import type { IrrUnavailableReason, PortfolioKpis } from "./kpi-calculations.js";
+import type { CashFlow, IrrUnavailableReason, PortfolioKpis } from "./kpi-calculations.js";
 import type { PropertyStatus } from "../properties/property-status.js";
 
 /** Where the revenue of a property comes from. */
@@ -34,3 +34,6 @@ export interface PortfolioKpisDto {
   propertiesByStatus: Record<PropertyStatus, number>;
   properties: PropertyKpisDto[];
 }
+
+/** Money is integer cents; months are `YYYY-MM`. */
+export type CashFlowDto = CashFlow;

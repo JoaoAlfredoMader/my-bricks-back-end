@@ -36,7 +36,7 @@ export interface Operation {
     binary?: { contentType: string; description?: string };
   };
   /** Error statuses beyond the ones every operation gets (401/403 by access, 400 for input, 404 for `:id`). */
-  errors?: ReadonlyArray<409 | 413 | 415 | 422>;
+  errors?: ReadonlyArray<404 | 409 | 413 | 415 | 422>;
 }
 
 export const ERROR_DESCRIPTIONS: Record<number, string> = {

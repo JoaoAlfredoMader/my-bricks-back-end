@@ -4,17 +4,29 @@ import { centsToNumber } from "../../shared/money.js";
 import { derivePropertyStatus, type PropertyStatus } from "../properties/property-status.js";
 import {
   aggregatePortfolio,
+  computeCashFlow,
   computeIrr,
   computePropertyKpis,
+  type CashFlowRevenue,
+  type MonthKey,
   type PropertyKpis,
   type RentBasis,
 } from "./kpi-calculations.js";
-import type { PortfolioKpisDto, PropertyKpisDto, RevenueSource } from "./kpis.dto.js";
-import type { KpiScope, KpisRepository, PropertyKpiRecord } from "./kpis.repository.js";
+import type { CashFlowDto, PortfolioKpisDto, PropertyKpisDto, RevenueSource } from "./kpis.dto.js";
+import type { CashFlowPropertyRecord, KpiScope, KpisRepository, PropertyKpiRecord } from "./kpis.repository.js";
+
+export interface CashFlowInput {
+  /** `YYYY-MM`, already validated. */
+  from: MonthKey;
+  to: MonthKey;
+  /** One property as a whole; without it, the whole visible portfolio weighted by ownership share. */
+  propertyId?: string | undefined;
+}
 
 export interface KpisService {
   property(tenant: TenantScope, id: string, options: { asOf?: string | undefined }): Promise<PropertyKpisDto>;
   portfolio(tenant: TenantScope, options: { asOf?: string | undefined; clientId?: string | undefined }): Promise<PortfolioKpisDto>;
+  cashFlow(tenant: TenantScope, input: CashFlowInput): Promise<CashFlowDto>;
 }
 
 /** Owners and admins see the whole organization; members only the properties they created. */
@@ -60,6 +72,43 @@ function resolveRent(record: PropertyKpiRecord): { rent: RentBasis; source: Reve
     return { rent: { kind: "nominal", monthlyCents: centsToNumber(contract.monthlyRentCents) }, source: "contract" };
   }
   return { rent: { kind: "none" }, source: "none" };
+}
+
+/** First and last day of the months `from` and `to` (`YYYY-MM`). */
+function monthWindow(from: MonthKey, to: MonthKey): { from: Date; to: Date } {
+  return {
+    from: new Date(Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, 1)),
+    to: new Date(Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)), 0)),
+  };
+}
+
+/**
+ * Chooses the income the same way `resolveRent` does for the KPIs: manual mode takes the typed rent,
+ * short-stay properties take their bookings, every other property takes its conventional contracts.
+ * A contract that was ended without a date stops in the month it was ended.
+ */
+function resolveCashFlowRevenue(record: CashFlowPropertyRecord): CashFlowRevenue {
+  if (record.rentalMode === "manual") {
+    const monthly = record.manualMonthlyRentCents ? centsToNumber(record.manualMonthlyRentCents) : 0;
+    return monthly > 0 ? { kind: "manual", monthlyCents: monthly } : { kind: "none" };
+  }
+  if (record.usageType === "short_stay") {
+    return {
+      kind: "reservations",
+      reservations: record.reservations.map((reservation) => ({
+        checkIn: toDateOnly(reservation.checkIn),
+        totalCents: centsToNumber(reservation.totalAmountCents),
+      })),
+    };
+  }
+  return {
+    kind: "contracts",
+    periods: record.contracts.map((contract) => ({
+      monthlyCents: centsToNumber(contract.monthlyRentCents),
+      startsOn: toDateOnly(contract.startDate),
+      endsOn: contract.endDate ? toDateOnly(contract.endDate) : contract.status === "ended" ? toDateOnly(contract.updatedAt) : null,
+    })),
+  };
 }
 
 interface Computed {
@@ -161,6 +210,33 @@ export function createKpisService(repository: KpisRepository): KpisService {
         propertiesByStatus,
         properties: computed.map(({ dto }) => dto),
       };
+    },
+
+    async cashFlow(tenant, { from, to, propertyId }) {
+      const records = await repository.loadCashFlow(visibleScope(tenant), {
+        ...(propertyId ? { propertyId } : {}),
+        ...monthWindow(from, to),
+      });
+      if (propertyId && records.length === 0) throw AppError.notFound("Property not found");
+
+      return computeCashFlow({
+        from,
+        to,
+        properties: records.map((record) => ({
+          // One property is reported as a whole; the portfolio is weighted by ownership share, like /portfolio.
+          share: propertyId ? 100 : record.ownershipPercentage,
+          usageType: record.usageType,
+          occupancyRate: record.occupancyRate,
+          annualExpensesCents: centsToNumber(record.annualExpensesCents),
+          revenue: resolveCashFlowRevenue(record),
+          transactions: record.transactions.map((transaction) => ({
+            occurredOn: toDateOnly(transaction.occurredOn),
+            signedAmountCents: (transaction.transactionType === "revenue" ? 1 : -1) * centsToNumber(transaction.amountCents),
+            isRecurring: transaction.isRecurring,
+            recurrenceEndsOn: transaction.recurrenceEndsOn ? toDateOnly(transaction.recurrenceEndsOn) : null,
+          })),
+        })),
+      });
     },
   };
 }

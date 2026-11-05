@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AmortizationSystem, UsageType } from "../../generated/prisma/enums.js";
-import type { PortfolioKpisDto, PropertyKpisDto } from "../../modules/kpis/kpis.dto.js";
+import type { CashFlowDto, PortfolioKpisDto, PropertyKpisDto } from "../../modules/kpis/kpis.dto.js";
 import type { FinancingScheduleDto } from "../../modules/properties/properties.dto.js";
 import { cents, date, nullable, output } from "./common.js";
 import { propertyStatusSchema } from "./entities.js";
@@ -57,6 +57,44 @@ export const portfolioKpisSchema = output(
     }),
     properties: z.array(propertyKpisSchema),
   }) satisfies z.ZodType<PortfolioKpisDto>,
+);
+
+const month = z.string().describe("Calendar month, YYYY-MM");
+
+export const cashFlowSchema = output(
+  "CashFlow",
+  z.object({
+    from: month,
+    to: month,
+    months: z
+      .array(
+        z.object({
+          month,
+          revenue: z.object({
+            rentCents: cents.describe(
+              "Rent in force that month: the typed rent (manual mode) or the conventional contract in force (contract mode), times the expected occupancy rate. Zero for short-stay properties, whose income is the bookings",
+            ),
+            reservationsCents: cents.describe(
+              "Confirmed bookings of short-stay properties, in full in the month of the check-in (no spreading over the nights; the occupancy rate does not apply)",
+            ),
+            transactionsCents: cents.describe("Revenue transactions: one-off ones in their month, recurring ones in every month until the month of their end, inclusive"),
+            totalCents: cents.describe("rentCents + reservationsCents + transactionsCents"),
+          }),
+          expenses: z.object({
+            fixedCents: cents.describe("The annual expenses of the property divided by 12, the same amount every month (rounded to the cent). Own use and loan for use are included"),
+            transactionsCents: cents.describe("Expense transactions, with the same month rules as the revenue ones. Financing installments recorded as transactions are here"),
+            totalCents: cents.describe("fixedCents + transactionsCents"),
+          }),
+          netCents: cents.describe("Revenue minus expenses of the month (negative when expenses are larger)"),
+        }),
+      )
+      .describe("One item per month of the window, in order, including months with nothing (all zeros)"),
+    totals: z.object({
+      revenueCents: cents.describe("Sum of the monthly total revenue"),
+      expensesCents: cents.describe("Sum of the monthly total expenses"),
+      netCents: cents.describe("revenueCents - expensesCents"),
+    }),
+  }) satisfies z.ZodType<CashFlowDto>,
 );
 
 const installmentSchema = z.object({
