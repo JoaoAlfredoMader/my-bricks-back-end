@@ -222,6 +222,7 @@ export function createKpisService(repository: KpisRepository): KpisService {
       return computeCashFlow({
         from,
         to,
+        view: propertyId ? "property" : "portfolio",
         properties: records.map((record) => ({
           // One property is reported as a whole; the portfolio is weighted by ownership share, like /portfolio.
           share: propertyId ? 100 : record.ownershipPercentage,

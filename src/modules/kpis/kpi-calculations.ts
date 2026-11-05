@@ -381,8 +381,11 @@ function propertyMonth(input: PropertyCashFlowInput, month: MonthKey): PropertyM
  * Month-by-month revenue and expenses of a set of properties, for the months from `from` to `to`
  * (both included, empty months come out as zeros).
  *
- * - Rent: see `CashFlowRevenue`. Own use and loan for use produce no income, so they have no rent or
- *   bookings, but their fixed expenses and transactions still count (as in the portfolio KPIs).
+ * - Rent: see `CashFlowRevenue`.
+ * - Own use and loan for use produce no income. In the `portfolio` view they are left out entirely
+ *   (rent, bookings, fixed expenses and transactions), exactly as `aggregatePortfolio` leaves them out
+ *   of the portfolio income and expenses. In the `property` view the property is shown as it is: no
+ *   rent or bookings, but its fixed expenses and transactions still count (as in the KPIs of one property).
  * - Bookings land in the month of the check-in.
  * - Fixed expenses are the annual expenses divided by 12, every month.
  * - Every amount of a property is weighted by its `share` (0-100, the ownership percentage) before
@@ -393,11 +396,14 @@ function propertyMonth(input: PropertyCashFlowInput, month: MonthKey): PropertyM
 export function computeCashFlow(input: {
   from: MonthKey;
   to: MonthKey;
+  /** `portfolio` adds properties that produce income; `property` reports whatever it is given, whatever its usage. */
+  view: "portfolio" | "property";
   properties: ReadonlyArray<PropertyCashFlowInput & { share: number }>;
 }): CashFlow {
   const months = monthRange(input.from, input.to).map((month): CashFlowMonth => {
     const sum: PropertyMonth = { rent: 0, reservations: 0, revenueTransactions: 0, fixed: 0, expenseTransactions: 0 };
     for (const property of input.properties) {
+      if (input.view === "portfolio" && !isIncomeProducing(property.usageType)) continue;
       const amounts = propertyMonth(property, month);
       const weight = property.share / 100;
       sum.rent += amounts.rent * weight;
