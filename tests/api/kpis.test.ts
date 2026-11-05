@@ -243,7 +243,12 @@ describe("KPIs API", () => {
     check("a booking from last year", august?.months?.[0]?.revenue.reservationsCents === 120_000, august);
 
     const own = (await get(ana, `from=2026-01&to=2026-01&propertyId=${p4}`)).json?.months?.[0];
-    check("own use: no income, the fixed expenses remain", own?.revenue.totalCents === 0 && own.expenses.fixedCents === 4_167 && own.netCents === -4_167, own);
+    check("own use asked for by itself: no income, the fixed expenses remain", own?.revenue.totalCents === 0 && own.expenses.fixedCents === 4_167 && own.netCents === -4_167, own);
+    const categories = (await ana.session.call("GET", "/api/lookups/transaction-categories")).json;
+    const renovation = categories.find((c: any) => c.name === "Reforma").id;
+    await ana.session.call("POST", "/api/transactions", { propertyId: p4, categoryId: renovation, amountCents: 12_300, occurredOn: "2026-01-20" });
+    const ownWithTransaction = (await get(ana, `from=2026-01&to=2026-01&propertyId=${p4}`)).json?.months?.[0];
+    check("own use asked for by itself: its transactions show too", ownWithTransaction?.expenses.transactionsCents === 12_300 && ownWithTransaction.expenses.totalCents === 4_167 + 12_300 && ownWithTransaction.revenue.totalCents === 0, ownWithTransaction);
     const vacant = (await get(ana, `from=2026-01&to=2026-01&propertyId=${p6}`)).json?.months?.[0];
     check("vacant property: nothing", vacant?.revenue.totalCents === 0 && vacant.expenses.totalCents === 0 && vacant.netCents === 0, vacant);
 
@@ -252,7 +257,8 @@ describe("KPIs API", () => {
     const jan = portfolio?.months?.[0];
     check("portfolio rent: P1 270,000 + P2 500,000 x 50% + P5 90,000 + Bia 45,000", jan?.revenue.rentCents === 270_000 + 250_000 + 90_000 + 45_000, jan);
     check("portfolio revenue transactions and bookings", jan?.revenue.transactionsCents === 5_000 && jan.revenue.reservationsCents === 0 && jan.revenue.totalCents === 660_000, jan);
-    check("portfolio expenses: fixed P1 50,000 + P3 8,333 + P4 4,167 (own use counts), plus the financing transaction", jan?.expenses.fixedCents === 62_500 && jan.expenses.transactionsCents === 40_000 && jan.expenses.totalCents === 102_500 && jan.netCents === 557_500, jan);
+    check("portfolio expenses: fixed P1 50,000 + P3 8,333 (own use P4 is left out), plus the financing transaction", jan?.expenses.fixedCents === 58_333 && jan.expenses.transactionsCents === 40_000 && jan.expenses.totalCents === 98_333 && jan.netCents === 561_667, jan);
+    check("the own-use property (fixed expenses 50,000 a year and a 12,300 expense in January) does not change the portfolio at all", jan?.expenses.totalCents === 98_333 && jan.expenses.fixedCents === 58_333 && jan.expenses.transactionsCents === 40_000, jan);
     check("portfolio totals are the sum of the months", portfolio?.totals?.revenueCents === portfolio.months.reduce((t: number, m: any) => t + m.revenue.totalCents, 0) && portfolio.totals.expensesCents === portfolio.months.reduce((t: number, m: any) => t + m.expenses.totalCents, 0) && portfolio.totals.netCents === portfolio.totals.revenueCents - portfolio.totals.expensesCents, portfolio?.totals);
     check("the weighting is the same as the portfolio KPIs: the rent line of P2 is half of its own value", jan?.revenue.rentCents - (await get(ana, `from=2026-01&to=2026-01&propertyId=${p2}`)).json.months[0].revenue.rentCents / 2 === 270_000 + 90_000 + 45_000);
   });

@@ -28,8 +28,8 @@ const base: PropertyCashFlowInput = {
   revenue: { kind: "none" },
   transactions: [],
 };
-const flow = (properties: Array<PropertyCashFlowInput & { share?: number }>, from = "2026-01", to = "2026-03") =>
-  computeCashFlow({ from, to, properties: properties.map((property) => ({ share: 100, ...property })) });
+const flow = (properties: Array<PropertyCashFlowInput & { share?: number }>, from = "2026-01", to = "2026-03", view: "portfolio" | "property" = "portfolio") =>
+  computeCashFlow({ from, to, view, properties: properties.map((property) => ({ share: 100, ...property })) });
 
 describe("months", () => {
   check("a window is every month from `from` to `to`, both included", monthRange("2026-01", "2026-03").join() === "2026-01,2026-02,2026-03");
@@ -144,9 +144,16 @@ describe("revenue sources", () => {
   check("bookings are not rent", flow([stays]).months.every((month) => month.revenue.rentCents === 0));
 
   const ownUse: PropertyCashFlowInput = { ...base, usageType: "own_use", annualExpensesCents: 60_000, revenue: { kind: "manual", monthlyCents: 100_000 }, transactions: [tx(-3_000, "2026-01-10")] };
-  const own = flow([ownUse], "2026-01", "2026-01").months[0]!;
-  check("own use has no income, but its expenses count", own.revenue.totalCents === 0 && own.expenses.fixedCents === 5_000 && own.expenses.transactionsCents === 3_000 && own.netCents === -8_000, own);
-  check("loan for use has no income either", flow([{ ...ownUse, usageType: "loan_for_use" }], "2026-01", "2026-01").months[0]!.revenue.rentCents === 0);
+  const own = flow([ownUse], "2026-01", "2026-01", "property").months[0]!;
+  check("one own-use property asked for by itself: no income, but its fixed expenses and transactions show", own.revenue.totalCents === 0 && own.expenses.fixedCents === 5_000 && own.expenses.transactionsCents === 3_000 && own.netCents === -8_000, own);
+  check("one loan-for-use property asked for by itself shows its expenses too", flow([{ ...ownUse, usageType: "loan_for_use" }], "2026-01", "2026-01", "property").months[0]!.expenses.totalCents === 8_000);
+
+  const rented: PropertyCashFlowInput = { ...base, annualExpensesCents: 120_000, revenue: { kind: "manual", monthlyCents: 200_000 }, occupancyRate: 100, transactions: [tx(-10_000, "2026-01-10")] };
+  const alone = flow([rented], "2026-01", "2026-01");
+  const withOwnUse = flow([rented, ownUse, { ...ownUse, usageType: "loan_for_use" }], "2026-01", "2026-01");
+  check("in the portfolio, own use and loan for use are left out entirely: they change no line and no total", JSON.stringify(withOwnUse) === JSON.stringify(alone) && withOwnUse.totals.expensesCents === 20_000, withOwnUse);
+  check("a portfolio made only of own-use properties is all zeros", flow([ownUse], "2026-01", "2026-01").totals.expensesCents === 0 && flow([ownUse], "2026-01", "2026-01").months[0]!.netCents === 0);
+  check("in the property view an income-producing property is unchanged", JSON.stringify(flow([rented], "2026-01", "2026-01", "property")) === JSON.stringify(alone));
 });
 
 describe("rounding", () => {
