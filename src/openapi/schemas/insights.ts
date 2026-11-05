@@ -81,7 +81,7 @@ export const cashFlowSchema = output(
             totalCents: cents.describe("rentCents + reservationsCents + transactionsCents"),
           }),
           expenses: z.object({
-            fixedCents: cents.describe("The annual expenses of the property divided by 12, the same amount every month (rounded to the cent). Own use and loan for use are included"),
+            fixedCents: cents.describe("The annual expenses of the property divided by 12, the same amount every month (rounded to the cent). Own use and loan for use appear only when a single property is asked for; the portfolio leaves them out"),
             transactionsCents: cents.describe("Expense transactions, with the same month rules as the revenue ones. Financing installments recorded as transactions are here"),
             totalCents: cents.describe("fixedCents + transactionsCents"),
           }),
