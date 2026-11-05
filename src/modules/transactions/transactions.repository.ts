@@ -1,6 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { TransactionType } from "../../generated/prisma/enums.js";
 import type { PrismaClient } from "../../lib/prisma.js";
+import { transactionPeriodFilter } from "./transaction-period.js";
 
 const select = {
   id: true,
@@ -44,7 +45,7 @@ export interface TransactionListQuery {
   isRecurring?: boolean;
   /**
    * Inclusive period. A one-off transaction is kept when `occurredOn` is inside it; a recurring one
-   * when its run of monthly occurrences touches it (see `periodFilter`).
+   * when its run of monthly occurrences touches it (see `transactionPeriodFilter`).
    */
   from?: Date;
   to?: Date;
@@ -70,28 +71,6 @@ function whereFor(scope: TransactionScope): Prisma.TransactionWhereInput {
   };
 }
 
-const firstOfMonth = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-
-/**
- * Period filter that knows about recurrence. A recurring transaction is one record that stands for
- * a charge every month from `occurredOn` until `recurrenceEndsOn`, so it belongs to the period when
- * it started on or before `to` and has not ended before `from`. The end is compared by month,
- * inclusive (an end date anywhere in the month of `from` still reaches it), the same way the IRR
- * cash flow reads it.
- */
-function periodFilter(from: Date | undefined, to: Date | undefined): Prisma.TransactionWhereInput {
-  const oneOff: Prisma.TransactionWhereInput = {
-    isRecurring: false,
-    occurredOn: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) },
-  };
-  const recurring: Prisma.TransactionWhereInput = {
-    isRecurring: true,
-    ...(to ? { occurredOn: { lte: to } } : {}),
-    ...(from ? { OR: [{ recurrenceEndsOn: null }, { recurrenceEndsOn: { gte: firstOfMonth(from) } }] } : {}),
-  };
-  return { OR: [oneOff, recurring] };
-}
-
 /** Repository layer: the only place that talks to Prisma. */
 export function createTransactionsRepository(prisma: PrismaClient): TransactionsRepository {
   return {
@@ -102,7 +81,7 @@ export function createTransactionsRepository(prisma: PrismaClient): Transactions
         ...(categoryId ? { categoryId } : {}),
         ...(transactionType ? { category: { transactionType } } : {}),
         ...(isRecurring !== undefined ? { isRecurring } : {}),
-        ...(from || to ? { AND: [periodFilter(from, to)] } : {}),
+        ...(from || to ? { AND: [transactionPeriodFilter(from, to)] } : {}),
       };
       const [items, total] = await Promise.all([
         prisma.transaction.findMany({
